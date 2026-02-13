@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-appsvai",
+  "productName": "svAi",
   "version": "0.1.0",
-  "identifier": "com.elio.tauri-appsvai",
+  "identifier": "com.elio.svai",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "tauri-appsvai",
+        "title": "svAi",
         "width": 800,
         "height": 600
       }
