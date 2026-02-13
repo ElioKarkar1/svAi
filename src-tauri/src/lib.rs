@@ -31,7 +31,7 @@ impl Default for SvlabConfig {
             filelist: "files.f".to_string(),
             include_dirs: vec![],
             defines: vec![],
-            verilator_args: vec!["--sv".to_string(), "-Wall".to_string()],
+            verilator_args: vec!["--sv".to_string(), "-Wall".to_string(), "--timing".to_string()],
         }
     }
 }
@@ -203,7 +203,10 @@ fn load_or_init_config(root: &Path) -> Result<SvlabConfig, String> {
             cfg.filelist = "files.f".to_string();
         }
         if cfg.verilator_args.is_empty() {
-            cfg.verilator_args = vec!["--sv".to_string(), "-Wall".to_string()];
+            cfg.verilator_args = vec!["--sv".to_string(), "-Wall".to_string(), "--timing".to_string()];
+        }
+        if !cfg.verilator_args.iter().any(|x| x == "--timing" || x == "--no-timing") {
+            cfg.verilator_args.push("--timing".to_string());
         }
         Ok(cfg)
     } else {
