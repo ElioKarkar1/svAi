@@ -72,21 +72,26 @@ export default function App() {
   };
 
   const openProject = async () => {
-    const sel = await open({ directory: true, multiple: false, title: "Open SystemVerilog project" });
-    const picked = typeof sel === "string" ? sel : Array.isArray(sel) ? sel[0] : null;
-    if (!picked) return;
-
-    setBusy(true);
     try {
-      setRoot(picked);
-      setLogText(`Opened: ${picked}`);
-      await refreshTree(picked);
-      await refreshToolchain();
-      setOpenTabs([]);
-      setActiveRel("");
-      setSelected("");
-    } finally {
-      setBusy(false);
+      const sel = await open({ directory: true, multiple: false, title: "Open SystemVerilog project" });
+      const picked = typeof sel === "string" ? sel : Array.isArray(sel) ? sel[0] : null;
+      if (!picked) return;
+
+      setBusy(true);
+      try {
+        setRoot(picked);
+        setLogText(`Opened: ${picked}`);
+        await refreshTree(picked);
+        await refreshToolchain();
+        setOpenTabs([]);
+        setActiveRel("");
+        setSelected("");
+      } finally {
+        setBusy(false);
+      }
+    } catch (e: any) {
+      setBottomTab("log");
+      setLogText(`Open Project failed: ${String(e ?? "")}`);
     }
   };
 
@@ -281,15 +286,15 @@ export default function App() {
 
       <div className="bottom">
         <div className="bottomTabs">
-          <div className={"bottomTab " + (bottomTab === "problems" ? "is-active" : "")} onClick={() => setBottomTab("problems")}>
+          <button className={"bottomTab " + (bottomTab === "problems" ? "is-active" : "")} onClick={() => setBottomTab("problems")}>
             Problems
-          </div>
-          <div className={"bottomTab " + (bottomTab === "log" ? "is-active" : "")} onClick={() => setBottomTab("log")}>
+          </button>
+          <button className={"bottomTab " + (bottomTab === "log" ? "is-active" : "")} onClick={() => setBottomTab("log")}>
             Log
-          </div>
-          <div className={"bottomTab " + (bottomTab === "ai" ? "is-active" : "")} onClick={() => setBottomTab("ai")}>
+          </button>
+          <button className={"bottomTab " + (bottomTab === "ai" ? "is-active" : "")} onClick={() => setBottomTab("ai")}>
             AI
-          </div>
+          </button>
         </div>
         <div className="panel">
           {bottomTab === "problems" ? problemsText : null}
