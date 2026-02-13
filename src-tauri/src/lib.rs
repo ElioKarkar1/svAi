@@ -220,6 +220,27 @@ struct LintResult {
 }
 
 #[tauri::command]
+fn msys_verilator_root_from_bin(vbin: &str) -> Option<String> {
+    let s = vbin.replace('/', "\\");
+    if !s.to_lowercase().contains("\\msys64\\") {
+        return None;
+    }
+    // Typical: C:\msys64\ucrt64\bin\verilator_bin.exe
+    let lower = s.to_lowercase();
+    if !lower.ends_with("\\verilator_bin.exe") {
+        return None;
+    }
+    let share = s
+        .trim_end_matches("verilator_bin.exe")
+        .trim_end_matches('\\')
+        .trim_end_matches("bin")
+        .trim_end_matches('\\')
+        .to_string();
+    // share now like C:\msys64\ucrt64
+    Some(format!("{}\\share\\verilator", share))
+}
+
+#[tauri::command]
 fn project_lint(root: String, verilator_path: Option<String>) -> Result<LintResult, String> {
     let rootp = PathBuf::from(&root);
     let _canon = rootp.canonicalize().map_err(|e| format!("Invalid root: {e}"))?;
@@ -235,6 +256,12 @@ fn project_lint(root: String, verilator_path: Option<String>) -> Result<LintResu
 
     let mut cmd = Command::new(&vpath);
     cmd.current_dir(&rootp);
+
+    // MSYS2 Windows install: need VERILATOR_ROOT so built-in std files resolve.
+    if let Some(vroot) = msys_verilator_root_from_bin(&vpath) {
+        cmd.env("VERILATOR_ROOT", vroot);
+    }
+
     cmd.arg("--lint-only");
     for a in cfg.verilator_args.iter() {
         cmd.arg(a);
