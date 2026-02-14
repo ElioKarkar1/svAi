@@ -195,6 +195,79 @@ fn project_write_file(root: String, rel_path: String, content: String) -> Result
     fs::write(&p, content).map_err(|e| format!("Failed to write file: {e}"))
 }
 
+#[tauri::command]
+fn project_mkdir(root: String, rel_path: String) -> Result<(), String> {
+    let rootp = PathBuf::from(&root);
+    let p = rootp.join(&rel_path);
+    if rel_path.trim().is_empty() {
+        return Err("Missing path".to_string());
+    }
+    if p.exists() {
+        return Err("Path already exists".to_string());
+    }
+    // For create operations, validate parent is within root.
+    if let Some(parent) = p.parent() {
+        ensure_within_root(&rootp, parent)?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dirs: {e}"))?;
+    }
+    fs::create_dir_all(&p).map_err(|e| format!("Failed to create dir: {e}"))
+}
+
+#[tauri::command]
+fn project_create_file(root: String, rel_path: String) -> Result<(), String> {
+    let rootp = PathBuf::from(&root);
+    let p = rootp.join(&rel_path);
+    if rel_path.trim().is_empty() {
+        return Err("Missing path".to_string());
+    }
+    if p.exists() {
+        return Err("Path already exists".to_string());
+    }
+    if let Some(parent) = p.parent() {
+        ensure_within_root(&rootp, parent)?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dirs: {e}"))?;
+    }
+    fs::write(&p, "").map_err(|e| format!("Failed to create file: {e}"))
+}
+
+#[tauri::command]
+fn project_rename(root: String, from_rel: String, to_rel: String) -> Result<(), String> {
+    let rootp = PathBuf::from(&root);
+    if from_rel.trim().is_empty() || to_rel.trim().is_empty() {
+        return Err("Missing path".to_string());
+    }
+    let from = rootp.join(&from_rel);
+    let to = rootp.join(&to_rel);
+    ensure_within_root(&rootp, &from)?;
+    if !from.exists() {
+        return Err("Source not found".to_string());
+    }
+    if to.exists() {
+        return Err("Destination already exists".to_string());
+    }
+    if let Some(parent) = to.parent() {
+        ensure_within_root(&rootp, parent)?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dirs: {e}"))?;
+    }
+    fs::rename(&from, &to).map_err(|e| format!("Failed to rename: {e}"))
+}
+
+#[tauri::command]
+fn project_delete(root: String, rel_path: String) -> Result<(), String> {
+    let rootp = PathBuf::from(&root);
+    let p = rootp.join(&rel_path);
+    ensure_within_root(&rootp, &p)?;
+    if !p.exists() {
+        return Ok(());
+    }
+    let meta = fs::metadata(&p).map_err(|e| format!("Failed to stat path: {e}"))?;
+    if meta.is_dir() {
+        fs::remove_dir_all(&p).map_err(|e| format!("Failed to delete dir: {e}"))
+    } else {
+        fs::remove_file(&p).map_err(|e| format!("Failed to delete file: {e}"))
+    }
+}
+
 fn load_or_init_config(root: &Path) -> Result<SvlabConfig, String> {
     let p = root.join(".svlab.json");
     if p.exists() {
@@ -316,6 +389,10 @@ pub fn run() {
             project_list,
             project_read_file,
             project_write_file,
+            project_mkdir,
+            project_create_file,
+            project_rename,
+            project_delete,
             project_lint
         ])
         .run(tauri::generate_context!())

@@ -48,6 +48,13 @@ type RunLog = {
   output: string;
 };
 
+type CtxMenu = {
+  x: number;
+  y: number;
+  path: string; // relative
+  isDir: boolean;
+} | null;
+
 type OpenTab = {
   relPath: string;
   title: string;
@@ -89,6 +96,8 @@ export default function App() {
   const [cursorCol, setCursorCol] = useState<number>(1);
 
   const editorRef = useRef<any>(null);
+
+  const [ctxMenu, setCtxMenu] = useState<CtxMenu>(null);
 
   const problemsText = useMemo(() => {
     if (!root) return "Open a project to see diagnostics.";
@@ -306,9 +315,18 @@ export default function App() {
         e.preventDefault();
         void saveActive();
       }
+      if (e.key === "Escape") {
+        setCtxMenu(null);
+      }
     };
+
+    const onClick = () => setCtxMenu(null);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("click", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("click", onClick);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, root]);
 
@@ -532,6 +550,11 @@ export default function App() {
                                 setSelected(n.path);
                                 toggleExpanded(n.path);
                               }}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                setSelected(n.path);
+                                setCtxMenu({ x: e.clientX, y: e.clientY, path: n.path, isDir: true });
+                              }}
                             >
                               <span className="chev">{isOpen ? "▾" : "▸"}</span>
                               <span className="treeIcon">📁</span>
@@ -552,6 +575,11 @@ export default function App() {
                           onClick={() => {
                             setSelected(n.path);
                             void openFile(n.path);
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setSelected(n.path);
+                            setCtxMenu({ x: e.clientX, y: e.clientY, path: n.path, isDir: false });
                           }}
                         >
                           <span className="treeIcon treeIcon--file">{icon}</span>
@@ -724,6 +752,106 @@ export default function App() {
           <div className="statusbar__item">Ln {cursorLine}, Col {cursorCol}</div>
         </div>
       </div>
+
+      {ctxMenu ? (
+        <div className="ctx" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+          <button
+            className="ctx__item"
+            onClick={() => {
+              setCtxMenu(null);
+              void openFile(ctxMenu.path);
+            }}
+            disabled={ctxMenu.isDir}
+          >
+            Open
+          </button>
+
+          <div className="ctx__sep" />
+
+          <button
+            className="ctx__item"
+            onClick={() => {
+              const name = window.prompt("New file name (relative to this folder)", ctxMenu.isDir ? `${ctxMenu.path}/new.sv` : "new.sv");
+              if (!name) return;
+              setCtxMenu(null);
+              void (async () => {
+                try {
+                  await invoke("project_create_file", { root, relPath: name });
+                  pushRun({ title: "Create file", output: `Created ${name}` });
+                  await refreshTree(root);
+                  await openFile(name);
+                } catch (e: any) {
+                  pushRun({ title: "Create file (error)", output: String(e ?? "") });
+                }
+              })();
+            }}
+          >
+            New File
+          </button>
+
+          <button
+            className="ctx__item"
+            onClick={() => {
+              const name = window.prompt("New folder name (relative)", ctxMenu.isDir ? `${ctxMenu.path}/new_folder` : "new_folder");
+              if (!name) return;
+              setCtxMenu(null);
+              void (async () => {
+                try {
+                  await invoke("project_mkdir", { root, relPath: name });
+                  pushRun({ title: "Create folder", output: `Created ${name}` });
+                  await refreshTree(root);
+                } catch (e: any) {
+                  pushRun({ title: "Create folder (error)", output: String(e ?? "") });
+                }
+              })();
+            }}
+          >
+            New Folder
+          </button>
+
+          <div className="ctx__sep" />
+
+          <button
+            className="ctx__item"
+            onClick={() => {
+              const to = window.prompt("Rename to (relative path)", ctxMenu.path);
+              if (!to || to === ctxMenu.path) return;
+              setCtxMenu(null);
+              void (async () => {
+                try {
+                  await invoke("project_rename", { root, fromRel: ctxMenu.path, toRel: to });
+                  pushRun({ title: "Rename", output: `${ctxMenu.path} → ${to}` });
+                  await refreshTree(root);
+                } catch (e: any) {
+                  pushRun({ title: "Rename (error)", output: String(e ?? "") });
+                }
+              })();
+            }}
+          >
+            Rename
+          </button>
+
+          <button
+            className="ctx__item ctx__item--danger"
+            onClick={() => {
+              const ok = window.confirm(`Delete ${ctxMenu.path}?`);
+              if (!ok) return;
+              setCtxMenu(null);
+              void (async () => {
+                try {
+                  await invoke("project_delete", { root, relPath: ctxMenu.path });
+                  pushRun({ title: "Delete", output: `Deleted ${ctxMenu.path}` });
+                  await refreshTree(root);
+                } catch (e: any) {
+                  pushRun({ title: "Delete (error)", output: String(e ?? "") });
+                }
+              })();
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
