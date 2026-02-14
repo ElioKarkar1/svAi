@@ -236,6 +236,20 @@ button, input, textarea {
   justify-content: center;
 }
 
+.treeIcon {
+  width: 18px;
+  display: inline-flex;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+.treeIcon--file {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: -0.2px;
+  opacity: 0.75;
+}
+
 .treeName {
   overflow: hidden;
   text-overflow: ellipsis;

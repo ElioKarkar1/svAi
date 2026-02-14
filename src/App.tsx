@@ -161,15 +161,24 @@ export default function App() {
     const items = (await invoke("project_list", { root: r })) as FsNode[];
     setNodes(items);
 
-    // Expand top-level dirs by default.
-    const next: Record<string, boolean> = {};
+    // Expand top-level dirs by default; merge with persisted state if present.
+    const defaults: Record<string, boolean> = {};
     for (const n of items) {
       if (n.is_dir) {
         const p = (n.path || "").replace(/\\/g, "/");
-        if (!p.includes("/")) next[p] = true;
+        if (!p.includes("/")) defaults[p] = true;
       }
     }
-    setExpanded((prev) => ({ ...next, ...prev }));
+
+    let persisted: Record<string, boolean> = {};
+    try {
+      const raw = localStorage.getItem(`svai.expand.${r}`);
+      if (raw) persisted = JSON.parse(raw);
+    } catch {
+      // ignore
+    }
+
+    setExpanded((prev) => ({ ...defaults, ...persisted, ...prev }));
   };
 
   const openProject = async () => {
@@ -353,7 +362,15 @@ export default function App() {
   const tree = useMemo(() => buildTree(nodes), [nodes]);
 
   const toggleExpanded = (p: string) => {
-    setExpanded((prev) => ({ ...prev, [p]: !prev[p] }));
+    setExpanded((prev) => {
+      const next = { ...prev, [p]: !prev[p] };
+      try {
+        if (root) localStorage.setItem(`svai.expand.${root}`, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
   };
 
   const rootName = useMemo(() => {
@@ -517,6 +534,7 @@ export default function App() {
                               }}
                             >
                               <span className="chev">{isOpen ? "▾" : "▸"}</span>
+                              <span className="treeIcon">📁</span>
                               <span className="treeName">{n.name}</span>
                             </button>
                             {isOpen ? n.children.map((c) => renderNode(c, depth + 1)) : null}
@@ -524,6 +542,8 @@ export default function App() {
                         );
                       }
 
+                      const lower = n.name.toLowerCase();
+                      const icon = lower.endsWith(".sv") || lower.endsWith(".svh") || lower.endsWith(".v") ? "{}" : lower.endsWith(".json") ? "{ }" : lower.endsWith(".f") ? "≡" : "·";
                       return (
                         <button
                           key={n.path}
@@ -534,6 +554,7 @@ export default function App() {
                             void openFile(n.path);
                           }}
                         >
+                          <span className="treeIcon treeIcon--file">{icon}</span>
                           <span className="treeName">{n.name}</span>
                         </button>
                       );
