@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import Editor from "@monaco-editor/react";
@@ -17,7 +17,29 @@ type LintResult = { code: number; output: string };
 
 type BottomTab = "problems" | "terminal" | "ai";
 
-type ActivityTab = "explorer" | "problems" | "log" | "ai" | "settings";
+type ActivityTab = "explorer" | "problems" | "terminal" | "ai" | "settings";
+
+type Severity = "error" | "warning";
+
+type Problem = {
+  id: string;
+  severity: Severity;
+  code?: string;
+  file: string;
+  line: number;
+  col?: number;
+  message: string;
+  raw: string;
+};
+
+type RunLog = {
+  id: string;
+  ts: number;
+  title: string;
+  cmd?: string;
+  code?: number;
+  output: string;
+};
 
 type OpenTab = {
   relPath: string;
@@ -49,20 +71,42 @@ export default function App() {
   const [activityTab, setActivityTab] = useState<ActivityTab>("explorer");
 
   const [bottomTab, setBottomTab] = useState<BottomTab>("terminal");
-  const [logText, setLogText] = useState<string>("");
+
+  const [runs, setRuns] = useState<RunLog[]>([]);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+
+  const [problems, setProblems] = useState<Problem[]>([]);
 
   const [cursorLine, setCursorLine] = useState<number>(1);
   const [cursorCol, setCursorCol] = useState<number>(1);
 
-  // placeholder for parsed problems later
+  const editorRef = useRef<any>(null);
+
   const problemsText = useMemo(() => {
-    const hint = root
-      ? "(Problems parser coming next — for now, use Log output.)"
-      : "Open a project to see diagnostics.";
-    return hint;
-  }, [root]);
+    if (!root) return "Open a project to see diagnostics.";
+    if (problems.length === 0) return "No problems.";
+    return `${problems.length} problem(s).`;
+  }, [root, problems.length]);
+
+  const activeRun = useMemo(() => (activeRunId ? runs.find((r) => r.id === activeRunId) ?? null : null), [activeRunId, runs]);
+
+  const terminalText = useMemo(() => {
+    if (!activeRun) {
+      return runs.length ? (runs[0]?.output ?? "") : "";
+    }
+    return activeRun.output;
+  }, [activeRun, runs]);
 
   const activeTab = useMemo(() => openTabs.find((t) => t.relPath === activeRel) ?? null, [openTabs, activeRel]);
+
+  const nowId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  const pushRun = (r: Omit<RunLog, "id" | "ts">) => {
+    const item: RunLog = { id: nowId(), ts: Date.now(), ...r };
+    setRuns((prev) => [item, ...prev]);
+    setActiveRunId(item.id);
+    return item.id;
+  };
 
   const refreshToolchain = async () => {
     try {
@@ -71,6 +115,38 @@ export default function App() {
     } catch (e: any) {
       setToolchain({ verilator_path: "", ok: false, version: "", error: String(e ?? "toolchain check failed") });
     }
+  };
+
+  const parseProblemsFromVerilator = (text: string): Problem[] => {
+    const out: Problem[] = [];
+    const lines = (text || "").replace(/\r\n/g, "\n").split("\n");
+
+    for (const raw of lines) {
+      // Examples:
+      // %Error-NEEDTIMINGOPT: tb\tb_counter.sv:8:10: message...
+      // %Warning-PROCASSINIT: tb\tb_counter.sv:2:15: message...
+      const m = raw.match(/^%(Error|Warning)(?:-([A-Z0-9_]+))?:\s+([^:]+):(\d+)(?::(\d+))?:\s+(.*)$/);
+      if (!m) continue;
+      const sev = m[1] === "Error" ? "error" : "warning";
+      const code = m[2] || "";
+      const file = (m[3] || "").replace(/\\/g, "/");
+      const line = Number(m[4] || 0);
+      const col = m[5] ? Number(m[5]) : undefined;
+      const message = (m[6] || "").trim();
+
+      out.push({
+        id: nowId(),
+        severity: sev,
+        code: code || undefined,
+        file,
+        line,
+        col,
+        message,
+        raw,
+      });
+    }
+
+    return out;
   };
 
   const refreshTree = async (r: string) => {
@@ -87,18 +163,19 @@ export default function App() {
       setBusy(true);
       try {
         setRoot(picked);
-        setLogText(`Opened: ${picked}`);
+        pushRun({ title: "Open Folder", output: `Opened: ${picked}` });
         await refreshTree(picked);
         await refreshToolchain();
         setOpenTabs([]);
         setActiveRel("");
         setSelected("");
+        setProblems([]);
       } finally {
         setBusy(false);
       }
     } catch (e: any) {
       setBottomTab("terminal");
-      setLogText(`Open Project failed: ${String(e ?? "")}`);
+      pushRun({ title: "Open Folder (error)", output: `Open Project failed: ${String(e ?? "")}` });
     }
   };
 
@@ -123,8 +200,8 @@ export default function App() {
       setOpenTabs((prev) => [...prev, tab]);
       setActiveRel(relPath);
     } catch (e: any) {
-      setLogText(`Open failed: ${String(e ?? "")}`);
       setBottomTab("terminal");
+      pushRun({ title: "Open file (error)", output: `Open failed: ${String(e ?? "")}` });
     } finally {
       setBusy(false);
     }
@@ -144,9 +221,9 @@ export default function App() {
     try {
       await invoke("project_write_file", { root, relPath: activeTab.relPath, content: activeTab.value });
       setOpenTabs((prev) => prev.map((t) => (t.relPath === activeTab.relPath ? { ...t, dirty: false } : t)));
-      setLogText(`Saved: ${activeTab.relPath}`);
+      pushRun({ title: "Save", output: `Saved: ${activeTab.relPath}` });
     } catch (e: any) {
-      setLogText(`Save failed: ${String(e ?? "")}`);
+      pushRun({ title: "Save (error)", output: `Save failed: ${String(e ?? "")}` });
     } finally {
       setBusy(false);
     }
@@ -161,12 +238,35 @@ export default function App() {
         root,
         verilatorPath: toolchain?.verilator_path || "",
       })) as LintResult;
-      setLogText(res.output || `(no output) (code ${res.code})`);
+
+      const output = res.output || `(no output) (code ${res.code})`;
+      pushRun({ title: `Lint (${res.code === 0 ? "ok" : "issues"})`, cmd: "verilator --lint-only ...", code: res.code, output });
+      const ps = parseProblemsFromVerilator(output);
+      setProblems(ps);
+      if (ps.length) {
+        setBottomTab("problems");
+      }
     } catch (e: any) {
-      setLogText(`Lint failed: ${String(e ?? "")}`);
+      const msg = `Lint failed: ${String(e ?? "")}`;
+      pushRun({ title: "Lint (error)", cmd: "verilator --lint-only ...", output: msg });
     } finally {
       setBusy(false);
     }
+  };
+
+  const jumpTo = async (p: Problem) => {
+    if (!root) return;
+    await openFile(p.file);
+    // Wait a tick for Monaco to mount in case the tab was just opened.
+    setTimeout(() => {
+      const ed = editorRef.current;
+      if (!ed) return;
+      const line = Math.max(1, p.line || 1);
+      const col = Math.max(1, p.col || 1);
+      ed.revealLineInCenter(line);
+      ed.setPosition({ lineNumber: line, column: col });
+      ed.focus();
+    }, 30);
   };
 
   useEffect(() => {
@@ -246,11 +346,11 @@ export default function App() {
           </button>
 
           <button
-            className={"activity__btn " + (activityTab === "log" ? "is-active" : "")}
-            data-label="Log"
-            aria-label="Log"
+            className={"activity__btn " + (activityTab === "terminal" ? "is-active" : "")}
+            data-label="Terminal"
+            aria-label="Terminal"
             onClick={() => {
-              setActivityTab("log");
+              setActivityTab("terminal");
               setBottomTab("terminal");
             }}
           >
@@ -261,8 +361,8 @@ export default function App() {
 
           <button
             className={"activity__btn " + (activityTab === "ai" ? "is-active" : "")}
-            data-label="AI"
-            aria-label="AI"
+            data-label="AI Assist"
+            aria-label="AI Assist"
             onClick={() => {
               setActivityTab("ai");
               setBottomTab("ai");
@@ -381,6 +481,7 @@ export default function App() {
                 language={activeTab.language}
                 value={activeTab.value}
                 onMount={(ed) => {
+                  editorRef.current = ed;
                   const pos = ed.getPosition();
                   if (pos) {
                     setCursorLine(pos.lineNumber);
@@ -429,16 +530,77 @@ export default function App() {
           </button>
         </div>
         <div className="panel">
-          {bottomTab === "problems" ? problemsText : null}
-          {bottomTab === "terminal" ? logText : null}
+          {bottomTab === "problems" ? (
+            <div className="problems">
+              <div className="problems__head">
+                <div className="muted">
+                  {problems.filter((p) => p.severity === "error").length} error(s) · {problems.filter((p) => p.severity === "warning").length} warning(s)
+                </div>
+              </div>
+              <div className="problems__list">
+                {problems.length === 0 ? (
+                  <div className="muted">{problemsText}</div>
+                ) : (
+                  problems.map((p) => (
+                    <button
+                      key={p.id}
+                      className={"problem problem--" + p.severity}
+                      onClick={() => void jumpTo(p)}
+                      title={p.raw}
+                    >
+                      <span className={"problem__sev problem__sev--" + p.severity}>{p.severity === "error" ? "×" : "!"}</span>
+                      <span className="problem__msg">{p.message}</span>
+                      <span className="problem__meta">{p.file}:{p.line}{p.col ? `:${p.col}` : ""}{p.code ? ` · ${p.code}` : ""}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          {bottomTab === "terminal" ? (
+            <div className="terminal">
+              <div className="terminal__head">
+                <div className="terminal__runs">
+                  {runs.slice(0, 10).map((r) => (
+                    <button
+                      key={r.id}
+                      className={"terminal__run " + ((activeRunId || runs[0]?.id) === r.id ? "is-active" : "")}
+                      onClick={() => setActiveRunId(r.id)}
+                      title={new Date(r.ts).toLocaleString()}
+                    >
+                      {r.title}
+                    </button>
+                  ))}
+                </div>
+                <div className="terminal__actions">
+                  <button className="btn" onClick={() => { setRuns([]); setActiveRunId(null); }} disabled={busy}>
+                    Clear
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => void navigator.clipboard.writeText(terminalText || "")}
+                    disabled={busy || !terminalText}
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+              <pre className="terminal__body">{terminalText || "(no output)"}</pre>
+            </div>
+          ) : null}
+
           {bottomTab === "ai" ? <div className="muted">AI integration coming next (local Clawdbot-powered explain/fix).</div> : null}
         </div>
       </div>
 
       <div className="statusbar">
         <div className="statusbar__left">
-          <div className="statusbar__item">{toolchain?.ok ? "Verilator: OK" : "Verilator: missing"}</div>
-          <div className="statusbar__item">{root ? `Folder: ${rootName}` : "No folder"}</div>
+          <div className="statusbar__item">{toolchain?.ok ? "Verilator ✓" : "Verilator !"}</div>
+          <div className="statusbar__item">
+            {problems.filter((p) => p.severity === "error").length}× {problems.filter((p) => p.severity === "warning").length}!
+          </div>
+          <div className="statusbar__item">{root ? rootName : "No folder"}</div>
         </div>
         <div className="statusbar__right">
           <div className="statusbar__item">Ln {cursorLine}, Col {cursorCol}</div>

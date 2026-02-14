@@ -296,7 +296,123 @@ button, input, textarea {
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
+}
+
+.problems {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  min-height: 0;
+}
+
+.problems__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.problem {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  color: rgba(255,255,255,0.86);
+  cursor: pointer;
+}
+
+.problem:hover {
+  border-color: rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.05);
+}
+
+.problem__sev {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.12);
+  font-weight: 800;
+}
+
+.problem__sev--error {
+  border-color: rgba(248,113,113,0.55);
+  color: rgba(248,113,113,0.95);
+}
+
+.problem__sev--warning {
+  border-color: rgba(251,191,36,0.5);
+  color: rgba(251,191,36,0.9);
+}
+
+.problem__msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.problem__meta {
+  color: rgba(255,255,255,0.55);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.terminal {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  min-height: 0;
+}
+
+.terminal__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.terminal__runs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.terminal__run {
+  padding: 3px 8px;
+  height: 22px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+  color: rgba(255,255,255,0.78);
+  cursor: pointer;
+}
+
+.terminal__run.is-active {
+  border-color: rgba(0,122,204,0.45);
+  background: rgba(0,122,204,0.12);
+  color: rgba(255,255,255,0.92);
+}
+
+.terminal__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.terminal__body {
+  margin: 0;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.22);
+  color: rgba(255,255,255,0.86);
   white-space: pre-wrap;
+  overflow: auto;
 }
 
 .statusbar {
