@@ -281,6 +281,27 @@ export default function App() {
     }
   };
 
+  const saveAllDirty = async () => {
+    if (!root) return;
+    const dirtyTabs = openTabs.filter((t) => t.dirty);
+    if (dirtyTabs.length === 0) return;
+
+    setBusy(true);
+    setBottomTab("terminal");
+    try {
+      for (const t of dirtyTabs) {
+        await invoke("project_write_file", { root, relPath: t.relPath, content: t.value });
+      }
+      setOpenTabs((prev) => prev.map((t) => ({ ...t, dirty: false })));
+      pushRun({ title: "Save", output: `Saved ${dirtyTabs.length} file(s)` });
+    } catch (e: any) {
+      pushRun({ title: "Save (error)", output: `Save failed: ${String(e ?? "")}` });
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const lint = async () => {
     if (!root) return;
     setBusy(true);
@@ -433,6 +454,16 @@ export default function App() {
             onClick={() =>
               void (async () => {
                 if (!root) return;
+
+                const dirtyCount = openTabs.filter((t) => t.dirty).length;
+                if (dirtyCount > 0) {
+                  const ok = window.confirm(
+                    `You have ${dirtyCount} unsaved file(s).\n\nSave + Build now?`
+                  );
+                  if (!ok) return;
+                  await saveAllDirty();
+                }
+
                 setBusy(true);
                 setBottomTab("terminal");
                 try {
@@ -462,10 +493,42 @@ export default function App() {
             className="btn"
             onClick={() =>
               void (async () => {
-                if (!root || !lastBuiltExe) return;
+                if (!root) return;
+
+                const dirtyCount = openTabs.filter((t) => t.dirty).length;
+                if (dirtyCount > 0) {
+                  const ok = window.confirm(
+                    `You have ${dirtyCount} unsaved file(s).\n\nSave + Build + Run now?`
+                  );
+                  if (!ok) return;
+                  await saveAllDirty();
+                }
+
                 setBusy(true);
                 setBottomTab("terminal");
                 try {
+                  // If anything was dirty, rebuild before running.
+                  if (dirtyCount > 0) {
+                    const b = (await invoke("project_build", {
+                      root,
+                      verilatorPath: toolchain?.verilator_path || "",
+                      makePath: toolchain?.make_path || "",
+                    })) as BuildResult;
+                    pushRun({ title: `Build (${b.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: b.code, output: b.output || "" });
+                    setLastBuiltExe(b.exe_path || "");
+                    setLastWaves(b.waves_path || "");
+                    const ps = parseProblemsFromVerilator(b.output || "");
+                    setProblems(ps);
+                    if (ps.length) {
+                      setBottomTab("problems");
+                      return;
+                    }
+                  }
+
+                  if (!lastBuiltExe) {
+                    pushRun({ title: "Run (error)", output: "No executable yet. Build first." });
+                    return;
+                  }
                   const res = (await invoke("project_run", { root, exeRel: lastBuiltExe })) as RunResult;
                   pushRun({ title: `Run (${res.code === 0 ? "ok" : "exit " + res.code})`, cmd: lastBuiltExe, code: res.code, output: res.output || "" });
                 } catch (e: any) {
@@ -475,7 +538,7 @@ export default function App() {
                 }
               })()
             }
-            disabled={busy || !root || !lastBuiltExe}
+            disabled={busy || !root}
           >
             Run
           </button>
