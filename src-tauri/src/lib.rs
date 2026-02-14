@@ -403,7 +403,7 @@ fn generate_sim_main_cpp(root: &Path, top: &str, enable_fst: bool) -> Result<Pat
     };
 
     let content = format!(
-        "#include <verilated.h>\n{}#include \"V{}.h\"\n\nstatic vluint64_t main_time = 0;\n\nint main(int argc, char** argv) {{\n  Verilated::commandArgs(argc, argv);\n  V{}* top = new V{};\n{}\n  const vluint64_t max_time = 200000;\n  while (!Verilated::gotFinish() && main_time < max_time) {{\n    top->eval();\n{}    main_time++;\n    Verilated::timeInc(1);\n  }}\n{}\n  top->final();\n  delete top;\n  return 0;\n}}\n",
+        "#include <verilated.h>\n{}#include \"V{}.h\"\n\nstatic vluint64_t main_time = 0;\n\ndouble sc_time_stamp() {{ return (double)main_time; }}\n\nint main(int argc, char** argv) {{\n  Verilated::commandArgs(argc, argv);\n  V{}* top = new V{};\n{}\n  const vluint64_t max_time = 200000;\n  while (!Verilated::gotFinish() && main_time < max_time) {{\n    top->eval();\n{}    main_time++;\n    Verilated::timeInc(1);\n  }}\n{}\n  top->final();\n  delete top;\n  return 0;\n}}\n",
         trace_includes,
         top,
         top,
@@ -519,7 +519,7 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
     }
 
     let _enable_fst = cfg.verilator_args.iter().any(|x| x == "--trace-fst") || cfg.verilator_args.iter().any(|x| x == "--trace");
-    let sim_main = generate_sim_main_cpp(&rootp, top, true)?;
+    let _sim_main = generate_sim_main_cpp(&rootp, top, true)?;
 
     // 1) Verilator codegen (generates obj_dir)
     let mut vcmd = Command::new(&vpath);
@@ -534,7 +534,8 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
         vcmd.arg(a);
     }
     vcmd.arg("--exe");
-    vcmd.arg(sim_main.to_string_lossy().to_string());
+    // Pass relative path to avoid Windows/MSYS path weirdness.
+    vcmd.arg(".svlab/sim_main.cpp");
     vcmd.arg("--top-module");
     vcmd.arg(top);
     vcmd.arg("--trace-fst");
