@@ -29,16 +29,19 @@ button, input, textarea {
 .app {
   height: 100vh;
   display: grid;
-  grid-template-rows: 34px 1fr 220px 22px;
+  /* Titlebar may wrap when window is narrow */
+  grid-template-rows: auto 1fr 220px 22px;
 }
 
 .titlebar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
+  gap: 10px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+  flex-wrap: wrap;
 }
 
 .titlebar__left, .titlebar__right {
@@ -46,6 +49,7 @@ button, input, textarea {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .titlebar__app {
@@ -71,6 +75,7 @@ button, input, textarea {
   padding: 4px 10px;
   border-radius: 6px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .btn:hover {
@@ -88,6 +93,7 @@ button, input, textarea {
   border: 1px solid var(--border2);
   border-radius: 999px;
   background: rgba(255,255,255,0.04);
+  white-space: nowrap;
 }
 
 .pill--ok { border-color: rgba(34,197,94,0.35); }
