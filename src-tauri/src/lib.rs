@@ -573,6 +573,18 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
     let mk = format!("V{}.mk", top);
     let mut mcmd = Command::new(&mpath);
     mcmd.current_dir(&rootp);
+
+    // If using MSYS2 tools from Windows, ensure core Unix utils resolve (sh, rm, cat, xargs, uname) and
+    // prefer MSYS2 toolchain (ar) over anything else on PATH (e.g. Strawberry Perl's binutils).
+    if cfg!(windows) && mpath.to_lowercase().contains("\\msys64\\") {
+        let cur_path = std::env::var("PATH").unwrap_or_default();
+        let prefix = "C:\\msys64\\usr\\bin;C:\\msys64\\ucrt64\\bin;";
+        mcmd.env("PATH", format!("{}{}", prefix, cur_path));
+        // Make MSYS2 behave when invoked from a Windows process.
+        mcmd.env("CHERE_INVOKING", "1");
+        mcmd.env("MSYSTEM", "UCRT64");
+    }
+
     mcmd.arg("-C");
     mcmd.arg("obj_dir");
     mcmd.arg("-f");
