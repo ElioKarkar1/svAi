@@ -700,7 +700,10 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
         if !out.is_empty() && !out.ends_with('\n') { out.push('\n'); }
         out.push_str(&mout);
 
-        let exe_rel = format!("obj_dir/V{}", top);
+        let mut exe_rel = format!("obj_dir/V{}", top);
+        if cfg!(windows) {
+            exe_rel.push_str(".exe");
+        }
         let waves_rel = ".svlab/waves.fst".to_string();
         return Ok(BuildResult { code: mcode, output: out.trim().to_string(), exe_path: exe_rel, waves_path: waves_rel });
     }
@@ -717,7 +720,10 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
     if !out.is_empty() && !out.ends_with('\n') { out.push('\n'); }
     out.push_str(&mout);
 
-    let exe_rel = format!("obj_dir/V{}", top);
+    let mut exe_rel = format!("obj_dir/V{}", top);
+    if cfg!(windows) {
+        exe_rel.push_str(".exe");
+    }
     let waves_rel = ".svlab/waves.fst".to_string();
 
     Ok(BuildResult { code: mcode, output: out.trim().to_string(), exe_path: exe_rel, waves_path: waves_rel })
@@ -732,10 +738,20 @@ struct RunResult {
 #[tauri::command]
 fn project_run(root: String, exe_rel: String) -> Result<RunResult, String> {
     let rootp = PathBuf::from(&root);
-    let exe = rootp.join(&exe_rel);
+    let mut exe = rootp.join(&exe_rel);
     // exe may not exist yet; don't canonicalize.
     if !exe.exists() {
-        return Err("Executable not found. Build first.".to_string());
+        if cfg!(windows) {
+            let alt_rel = format!("{}.exe", exe_rel.trim_end_matches(".exe"));
+            let alt = rootp.join(alt_rel);
+            if alt.exists() {
+                exe = alt;
+            } else {
+                return Err("Executable not found. Build first.".to_string());
+            }
+        } else {
+            return Err("Executable not found. Build first.".to_string());
+        }
     }
     let mut cmd = Command::new(&exe);
     cmd.current_dir(&rootp);
