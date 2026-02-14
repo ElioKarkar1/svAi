@@ -22,6 +22,10 @@ type ToolchainStatus = {
   make_ok?: boolean;
   make_version?: string;
   make_error?: string;
+  gtkwave_path?: string;
+  gtkwave_ok?: boolean;
+  gtkwave_version?: string;
+  gtkwave_error?: string;
 };
 
 type BuildResult = { code: number; output: string; exe_path: string; waves_path: string };
@@ -441,7 +445,6 @@ export default function App() {
                   const ps = parseProblemsFromVerilator(res.output || "");
                   setProblems(ps);
                   if (ps.length) setBottomTab("problems");
-                  // stash exe path in terminal log so we can run
                   setLastBuiltExe(res.exe_path || "");
                   setLastWaves(res.waves_path || "");
                 } catch (e: any) {
@@ -476,6 +479,27 @@ export default function App() {
           >
             Run
           </button>
+          <button
+            className="btn"
+            onClick={() =>
+              void (async () => {
+                if (!root || !_lastWaves) return;
+                try {
+                  await invoke("project_open_waves", {
+                    root,
+                    wavesRel: _lastWaves,
+                    gtkwavePath: toolchain?.gtkwave_path || "",
+                  });
+                } catch (e: any) {
+                  pushRun({ title: "Open Waves (error)", output: String(e ?? "") });
+                  setBottomTab("terminal");
+                }
+              })()
+            }
+            disabled={busy || !root || !_lastWaves || !toolchain?.gtkwave_ok}
+          >
+            Open Waves
+          </button>
           <button className="btn" onClick={() => void saveActive()} disabled={busy || !activeTab || !activeTab.dirty}>
             Save
           </button>
@@ -484,6 +508,9 @@ export default function App() {
           </span>
           <span className={"pill " + (toolchain?.make_ok ? "pill--ok" : "pill--bad")}>
             {toolchain?.make_ok ? `make OK` : "make missing"}
+          </span>
+          <span className={"pill " + (toolchain?.gtkwave_ok ? "pill--ok" : "pill--bad")}>
+            {toolchain?.gtkwave_ok ? `GTKWave OK` : "GTKWave missing"}
           </span>
         </div>
       </div>

@@ -58,6 +58,15 @@ struct ToolchainStatus {
     make_version: String,
     #[serde(default)]
     make_error: String,
+
+    #[serde(default)]
+    gtkwave_path: String,
+    #[serde(default)]
+    gtkwave_ok: bool,
+    #[serde(default)]
+    gtkwave_version: String,
+    #[serde(default)]
+    gtkwave_error: String,
 }
 
 fn canonicalize_lossy(p: &Path) -> Result<String, String> {
@@ -179,8 +188,34 @@ fn detect_make() -> (String, bool, String, String) {
     ("".to_string(), false, "".to_string(), "make not found".to_string())
 }
 
+fn gtkwave_candidates() -> Vec<String> {
+    let mut c = vec!["gtkwave".to_string()];
+    if cfg!(windows) {
+        c.insert(0, "C:\\msys64\\ucrt64\\bin\\gtkwave.exe".to_string());
+        c.insert(0, "C:\\msys64\\mingw64\\bin\\gtkwave.exe".to_string());
+    }
+    c
+}
+
+fn detect_gtkwave() -> (String, bool, String, String) {
+    for cand in gtkwave_candidates() {
+        let path = cand.clone();
+        let mut cmd = Command::new(&path);
+        cmd.arg("--version");
+        if let Ok((code, out)) = run_cmd_capture(cmd) {
+            if code == 0 {
+                // gtkwave prints multi-line version; keep first non-empty line
+                let ver = out.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+                return (path, true, ver, "".to_string());
+            }
+        }
+    }
+    ("".to_string(), false, "".to_string(), "gtkwave not found".to_string())
+}
+
 fn detect_verilator() -> ToolchainStatus {
     let (make_path, make_ok, make_version, make_error) = detect_make();
+    let (gtkwave_path, gtkwave_ok, gtkwave_version, gtkwave_error) = detect_gtkwave();
 
     for cand in verilator_candidates() {
         let path = cand.clone();
@@ -198,6 +233,10 @@ fn detect_verilator() -> ToolchainStatus {
                     make_ok,
                     make_version,
                     make_error,
+                    gtkwave_path,
+                    gtkwave_ok,
+                    gtkwave_version,
+                    gtkwave_error,
                 };
             }
         }
@@ -212,6 +251,10 @@ fn detect_verilator() -> ToolchainStatus {
         make_ok,
         make_version,
         make_error,
+        gtkwave_path,
+        gtkwave_ok,
+        gtkwave_version,
+        gtkwave_error,
     }
 }
 
@@ -736,6 +779,43 @@ struct RunResult {
 }
 
 #[tauri::command]
+fn project_open_waves(root: String, waves_rel: String, gtkwave_path: Option<String>) -> Result<(), String> {
+    let rootp = PathBuf::from(&root);
+    let waves = rootp.join(&waves_rel);
+    if !waves.exists() {
+        return Err("Waves file not found. Run the simulation first.".to_string());
+    }
+
+    let gpath = gtkwave_path
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| detect_gtkwave().0);
+    if gpath.trim().is_empty() {
+        return Err("GTKWave not found. Install it via MSYS2 and/or set path.".to_string());
+    }
+
+    if cfg!(windows) && is_msys2_path(&gpath) {
+        // Use bash -lc so MSYS2 GUI app launches with correct env.
+        let cmdline = format!("\"{}\" \"{}\"", gpath.replace('"', "\\\""), waves_rel);
+        let (code, out) = run_msys2_bash(&rootp, &cmdline)?;
+        if code != 0 {
+            return Err(format!("Failed to launch GTKWave ({code}): {out}"));
+        }
+        return Ok(());
+    }
+
+    let mut cmd = Command::new(&gpath);
+    cmd.current_dir(&rootp);
+    cmd.arg(waves_rel);
+    // Don't wait; we just spawn.
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.spawn().map_err(|e| format!("Failed to launch GTKWave: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn project_run(root: String, exe_rel: String) -> Result<RunResult, String> {
     let rootp = PathBuf::from(&root);
     let mut exe = rootp.join(&exe_rel);
@@ -775,7 +855,8 @@ pub fn run() {
             project_delete,
             project_lint,
             project_build,
-            project_run
+            project_run,
+            project_open_waves
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
