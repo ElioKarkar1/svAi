@@ -49,6 +49,15 @@ struct ToolchainStatus {
     ok: bool,
     version: String,
     error: String,
+
+    #[serde(default)]
+    make_path: String,
+    #[serde(default)]
+    make_ok: bool,
+    #[serde(default)]
+    make_version: String,
+    #[serde(default)]
+    make_error: String,
 }
 
 fn canonicalize_lossy(p: &Path) -> Result<String, String> {
@@ -113,7 +122,33 @@ fn run_cmd_capture(mut cmd: Command) -> Result<(i32, String), String> {
     Ok((code, s.trim().to_string()))
 }
 
+fn make_candidates() -> Vec<String> {
+    let mut c = vec!["make".to_string()];
+    if cfg!(windows) {
+        c.insert(0, "C:\\msys64\\usr\\bin\\make.exe".to_string());
+        c.insert(0, "C:\\msys64\\ucrt64\\bin\\make.exe".to_string());
+        c.insert(0, "C:\\msys64\\mingw64\\bin\\make.exe".to_string());
+    }
+    c
+}
+
+fn detect_make() -> (String, bool, String, String) {
+    for cand in make_candidates() {
+        let path = cand.clone();
+        let mut cmd = Command::new(&path);
+        cmd.arg("--version");
+        if let Ok((code, out)) = run_cmd_capture(cmd) {
+            if code == 0 {
+                return (path, true, out.lines().next().unwrap_or("").to_string(), "".to_string());
+            }
+        }
+    }
+    ("".to_string(), false, "".to_string(), "make not found".to_string())
+}
+
 fn detect_verilator() -> ToolchainStatus {
+    let (make_path, make_ok, make_version, make_error) = detect_make();
+
     for cand in verilator_candidates() {
         let path = cand.clone();
         let mut cmd = Command::new(&path);
@@ -126,6 +161,10 @@ fn detect_verilator() -> ToolchainStatus {
                     ok: true,
                     version: out.lines().next().unwrap_or("").to_string(),
                     error: "".to_string(),
+                    make_path,
+                    make_ok,
+                    make_version,
+                    make_error,
                 };
             }
         }
@@ -136,6 +175,10 @@ fn detect_verilator() -> ToolchainStatus {
         ok: false,
         version: "".to_string(),
         error: "Verilator not found. Install it (MSYS2 UCRT64) and/or set the path.".to_string(),
+        make_path,
+        make_ok,
+        make_version,
+        make_error,
     }
 }
 
@@ -295,7 +338,6 @@ struct LintResult {
     output: String,
 }
 
-#[tauri::command]
 fn msys_verilator_root_from_bin(vbin: &str) -> Option<String> {
     let s = vbin.replace('/', "\\");
     if !s.to_lowercase().contains("\\msys64\\") {
@@ -312,8 +354,67 @@ fn msys_verilator_root_from_bin(vbin: &str) -> Option<String> {
         .trim_end_matches("bin")
         .trim_end_matches('\\')
         .to_string();
-    // share now like C:\msys64\ucrt64
     Some(format!("{}\\share\\verilator", share))
+}
+
+fn ensure_svlab_dir(root: &Path) -> Result<PathBuf, String> {
+    let d = root.join(".svlab");
+    fs::create_dir_all(&d).map_err(|e| format!("Failed to create .svlab dir: {e}"))?;
+    Ok(d)
+}
+
+fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
+    if let Ok(existing) = fs::read_to_string(path) {
+        if existing == content {
+            return Ok(());
+        }
+    }
+    fs::write(path, content).map_err(|e| format!("Failed to write file: {e}"))
+}
+
+fn generate_sim_main_cpp(root: &Path, top: &str, enable_fst: bool) -> Result<PathBuf, String> {
+    let svlab = ensure_svlab_dir(root)?;
+    let p = svlab.join("sim_main.cpp");
+
+    let trace_includes = if enable_fst {
+        "#include \"verilated_fst_c.h\"\n"
+    } else {
+        ""
+    };
+
+    let trace_setup = if enable_fst {
+        format!(
+            "  Verilated::traceEverOn(true);\n  VerilatedFstC* tfp = new VerilatedFstC();\n  top->trace(tfp, 99);\n  tfp->open(\".svlab/waves.fst\");\n"
+        )
+    } else {
+        "".to_string()
+    };
+
+    let trace_dump = if enable_fst {
+        "    tfp->dump(main_time);\n"
+    } else {
+        ""
+    };
+
+    let trace_close = if enable_fst {
+        "  tfp->close();\n  delete tfp;\n"
+    } else {
+        ""
+    };
+
+    let content = format!(
+        "#include <verilated.h>\n{}#include \"V{}.h\"\n\nstatic vluint64_t main_time = 0;\n\nint main(int argc, char** argv) {{\n  Verilated::commandArgs(argc, argv);\n  V{}* top = new V{};\n{}\n  const vluint64_t max_time = 200000;\n  while (!Verilated::gotFinish() && main_time < max_time) {{\n    top->eval();\n{}    main_time++;\n    Verilated::timeInc(1);\n  }}\n{}\n  top->final();\n  delete top;\n  return 0;\n}}\n",
+        trace_includes,
+        top,
+        top,
+        top,
+        trace_setup,
+        trace_dump,
+        trace_close
+    );
+
+    write_if_changed(&p, &content)?;
+    Ok(p)
 }
 
 #[tauri::command]
@@ -379,6 +480,137 @@ fn project_lint(root: String, verilator_path: Option<String>) -> Result<LintResu
     Ok(LintResult { code, output })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BuildResult {
+    code: i32,
+    output: String,
+    exe_path: String,
+    waves_path: String,
+}
+
+fn guess_make_path() -> String {
+    let (p, ok, _, _) = detect_make();
+    if ok { p } else { "".to_string() }
+}
+
+#[tauri::command]
+fn project_build(root: String, verilator_path: Option<String>, make_path: Option<String>) -> Result<BuildResult, String> {
+    let rootp = PathBuf::from(&root);
+    let _canon = rootp.canonicalize().map_err(|e| format!("Invalid root: {e}"))?;
+    let cfg = load_or_init_config(&rootp)?;
+
+    let vpath = verilator_path
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| detect_verilator().verilator_path);
+    if vpath.trim().is_empty() {
+        return Err("Verilator not found".to_string());
+    }
+
+    let mpath = make_path
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| guess_make_path());
+    if mpath.trim().is_empty() {
+        return Err("make not found".to_string());
+    }
+
+    let top = cfg.top.trim();
+    if top.is_empty() {
+        return Err("Set .svlab.json top first".to_string());
+    }
+
+    let _enable_fst = cfg.verilator_args.iter().any(|x| x == "--trace-fst") || cfg.verilator_args.iter().any(|x| x == "--trace");
+    let sim_main = generate_sim_main_cpp(&rootp, top, true)?;
+
+    // 1) Verilator codegen (generates obj_dir)
+    let mut vcmd = Command::new(&vpath);
+    vcmd.current_dir(&rootp);
+    if let Some(vroot) = msys_verilator_root_from_bin(&vpath) {
+        vcmd.env("VERILATOR_ROOT", vroot);
+    }
+
+    vcmd.arg("-cc");
+    for a in cfg.verilator_args.iter() {
+        // ensure timing is present already
+        vcmd.arg(a);
+    }
+    vcmd.arg("--exe");
+    vcmd.arg(sim_main.to_string_lossy().to_string());
+    vcmd.arg("--top-module");
+    vcmd.arg(top);
+    vcmd.arg("--trace-fst");
+
+    for d in cfg.include_dirs.iter() {
+        vcmd.arg(format!("-I{}", d));
+    }
+    for def in cfg.defines.iter() {
+        vcmd.arg(format!("-D{}", def));
+    }
+
+    let fl = cfg.filelist.trim();
+    let flp = rootp.join(fl);
+    if flp.exists() {
+        vcmd.arg("-f");
+        vcmd.arg(fl);
+    } else {
+        // fallback: scan
+        for ent in walkdir::WalkDir::new(&rootp).follow_links(false).max_depth(6).into_iter().flatten() {
+            if !ent.file_type().is_file() { continue; }
+            let p = ent.path();
+            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+            if ext.eq_ignore_ascii_case("sv") || ext.eq_ignore_ascii_case("svh") || ext.eq_ignore_ascii_case("v") {
+                let rel = p.strip_prefix(&rootp).unwrap_or(p).to_string_lossy().to_string();
+                vcmd.arg(rel);
+            }
+        }
+    }
+
+    let (vcode, vout) = run_cmd_capture(vcmd)?;
+    if vcode != 0 {
+        return Ok(BuildResult { code: vcode, output: vout, exe_path: "".to_string(), waves_path: "".to_string() });
+    }
+
+    // 2) make
+    let mk = format!("V{}.mk", top);
+    let mut mcmd = Command::new(&mpath);
+    mcmd.current_dir(&rootp);
+    mcmd.arg("-C");
+    mcmd.arg("obj_dir");
+    mcmd.arg("-f");
+    mcmd.arg(&mk);
+    mcmd.arg("-j");
+
+    let (mcode, mout) = run_cmd_capture(mcmd)?;
+    let mut out = String::new();
+    out.push_str(&vout);
+    if !out.is_empty() && !out.ends_with('\n') { out.push('\n'); }
+    out.push_str(&mout);
+
+    let exe_rel = format!("obj_dir/V{}", top);
+    let waves_rel = ".svlab/waves.fst".to_string();
+
+    Ok(BuildResult { code: mcode, output: out.trim().to_string(), exe_path: exe_rel, waves_path: waves_rel })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RunResult {
+    code: i32,
+    output: String,
+}
+
+#[tauri::command]
+fn project_run(root: String, exe_rel: String) -> Result<RunResult, String> {
+    let rootp = PathBuf::from(&root);
+    let exe = rootp.join(&exe_rel);
+    // exe may not exist yet; don't canonicalize.
+    if !exe.exists() {
+        return Err("Executable not found. Build first.".to_string());
+    }
+    let mut cmd = Command::new(&exe);
+    cmd.current_dir(&rootp);
+    let (code, out) = run_cmd_capture(cmd)?;
+    Ok(RunResult { code, output: out })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -393,7 +625,9 @@ pub fn run() {
             project_create_file,
             project_rename,
             project_delete,
-            project_lint
+            project_lint,
+            project_build,
+            project_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

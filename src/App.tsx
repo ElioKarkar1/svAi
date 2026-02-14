@@ -18,7 +18,15 @@ type ToolchainStatus = {
   ok: boolean;
   version: string;
   error: string;
+  make_path?: string;
+  make_ok?: boolean;
+  make_version?: string;
+  make_error?: string;
 };
+
+type BuildResult = { code: number; output: string; exe_path: string; waves_path: string };
+
+type RunResult = { code: number; output: string };
 
 type LintResult = { code: number; output: string };
 
@@ -91,6 +99,8 @@ export default function App() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
   const [problems, setProblems] = useState<Problem[]>([]);
+  const [lastBuiltExe, setLastBuiltExe] = useState<string>("");
+  const [_lastWaves, setLastWaves] = useState<string>("");
 
   const [cursorLine, setCursorLine] = useState<number>(1);
   const [cursorCol, setCursorCol] = useState<number>(1);
@@ -414,11 +424,66 @@ export default function App() {
           <button className="btn" onClick={() => void lint()} disabled={busy || !root || !toolchain?.ok}>
             Lint
           </button>
+          <button
+            className="btn"
+            onClick={() =>
+              void (async () => {
+                if (!root) return;
+                setBusy(true);
+                setBottomTab("terminal");
+                try {
+                  const res = (await invoke("project_build", {
+                    root,
+                    verilatorPath: toolchain?.verilator_path || "",
+                    makePath: toolchain?.make_path || "",
+                  })) as BuildResult;
+                  pushRun({ title: `Build (${res.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: res.code, output: res.output || "" });
+                  const ps = parseProblemsFromVerilator(res.output || "");
+                  setProblems(ps);
+                  if (ps.length) setBottomTab("problems");
+                  // stash exe path in terminal log so we can run
+                  setLastBuiltExe(res.exe_path || "");
+                  setLastWaves(res.waves_path || "");
+                } catch (e: any) {
+                  pushRun({ title: "Build (error)", output: String(e ?? "") });
+                } finally {
+                  setBusy(false);
+                }
+              })()
+            }
+            disabled={busy || !root || !toolchain?.ok || !toolchain?.make_ok}
+          >
+            Build
+          </button>
+          <button
+            className="btn"
+            onClick={() =>
+              void (async () => {
+                if (!root || !lastBuiltExe) return;
+                setBusy(true);
+                setBottomTab("terminal");
+                try {
+                  const res = (await invoke("project_run", { root, exeRel: lastBuiltExe })) as RunResult;
+                  pushRun({ title: `Run (${res.code === 0 ? "ok" : "exit " + res.code})`, cmd: lastBuiltExe, code: res.code, output: res.output || "" });
+                } catch (e: any) {
+                  pushRun({ title: "Run (error)", output: String(e ?? "") });
+                } finally {
+                  setBusy(false);
+                }
+              })()
+            }
+            disabled={busy || !root || !lastBuiltExe}
+          >
+            Run
+          </button>
           <button className="btn" onClick={() => void saveActive()} disabled={busy || !activeTab || !activeTab.dirty}>
             Save
           </button>
           <span className={"pill " + (toolchain?.ok ? "pill--ok" : "pill--bad")}>
             {toolchain?.ok ? `Verilator OK` : "Verilator missing"}
+          </span>
+          <span className={"pill " + (toolchain?.make_ok ? "pill--ok" : "pill--bad")}>
+            {toolchain?.make_ok ? `make OK` : "make missing"}
           </span>
         </div>
       </div>
