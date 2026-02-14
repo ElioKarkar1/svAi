@@ -219,48 +219,74 @@ export default function App() {
         <aside className="activity">
           <button
             className={"activity__btn " + (activityTab === "explorer" ? "is-active" : "")}
-            title="Explorer"
+            data-label="Explorer"
+            aria-label="Explorer"
             onClick={() => setActivityTab("explorer")}
           >
-            E
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M4 6.5h6l2 2H20v9.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6.5Z" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M4 6.5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2" stroke="currentColor" strokeWidth="1.6" opacity="0.7"/>
+            </svg>
           </button>
+
           <button
             className={"activity__btn " + (activityTab === "problems" ? "is-active" : "")}
-            title="Problems"
+            data-label="Problems"
+            aria-label="Problems"
             onClick={() => {
               setActivityTab("problems");
               setBottomTab("problems");
             }}
           >
-            !
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 3 2.6 20h18.8L12 3Z" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M12 9v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+              <path d="M12 17.2h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            </svg>
           </button>
+
           <button
             className={"activity__btn " + (activityTab === "log" ? "is-active" : "")}
-            title="Log"
+            data-label="Log"
+            aria-label="Log"
             onClick={() => {
               setActivityTab("log");
               setBottomTab("log");
             }}
           >
-            ≡
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 7h12M6 12h12M6 17h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+            </svg>
           </button>
+
           <button
             className={"activity__btn " + (activityTab === "ai" ? "is-active" : "")}
-            title="AI"
+            data-label="AI"
+            aria-label="AI"
             onClick={() => {
               setActivityTab("ai");
               setBottomTab("ai");
             }}
           >
-            AI
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M7 12a5 5 0 0 1 10 0v4a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3v-4Z" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M9 11V9a3 3 0 0 1 6 0v2" stroke="currentColor" strokeWidth="1.6" opacity="0.8"/>
+              <path d="M5.5 12h1.2M17.3 12h1.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+            </svg>
           </button>
+
           <div style={{ flex: 1 }} />
+
           <button
             className={"activity__btn " + (activityTab === "settings" ? "is-active" : "")}
-            title="Settings"
+            data-label="Settings"
+            aria-label="Settings"
             onClick={() => setActivityTab("settings")}
           >
-            ⚙
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M19 12a7 7 0 0 0-.07-.98l2.02-1.57-2-3.46-2.46 1a7.2 7.2 0 0 0-1.7-.98l-.37-2.62H9.58l-.37 2.62c-.6.24-1.17.57-1.7.98l-2.46-1-2 3.46 2.02 1.57A7 7 0 0 0 5 12c0 .33.02.66.07.98L3.05 14.55l2 3.46 2.46-1c.53.41 1.1.74 1.7.98l.37 2.62h4.84l.37-2.62c.6-.24 1.17-.57 1.7-.98l2.46 1 2-3.46-2.02-1.57c.05-.32.07-.65.07-.98Z" stroke="currentColor" strokeWidth="1.2" opacity="0.8"/>
+            </svg>
           </button>
         </aside>
 
