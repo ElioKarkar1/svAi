@@ -101,6 +101,7 @@ export default function App() {
 
   const [runs, setRuns] = useState<RunLog[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const LAST_RUN_ID = "__last__";
 
   const [problems, setProblems] = useState<Problem[]>([]);
   const [lastBuiltExe, setLastBuiltExe] = useState<string>("");
@@ -128,15 +129,27 @@ export default function App() {
     return activeRun.output;
   }, [activeRun, runs]);
 
+  const _setLastRun = (r: Omit<RunLog, "id" | "ts"> & { id?: string; ts?: number }) => {
+    const item: RunLog = {
+      id: LAST_RUN_ID,
+      ts: Date.now(),
+      title: r.title,
+      cmd: r.cmd,
+      code: r.code,
+      output: r.output,
+    };
+    setRuns([item]);
+    setActiveRunId(item.id);
+  };
+
   const activeTab = useMemo(() => openTabs.find((t) => t.relPath === activeRel) ?? null, [openTabs, activeRel]);
 
   const nowId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+  // Single-slot terminal: always overwrite the last run/log.
   const pushRun = (r: Omit<RunLog, "id" | "ts">) => {
-    const item: RunLog = { id: nowId(), ts: Date.now(), ...r };
-    setRuns((prev) => [item, ...prev]);
-    setActiveRunId(item.id);
-    return item.id;
+    _setLastRun(r);
+    return LAST_RUN_ID;
   };
 
   const refreshToolchain = async () => {
@@ -862,18 +875,7 @@ export default function App() {
           {bottomTab === "terminal" ? (
             <div className="terminal">
               <div className="terminal__head">
-                <div className="terminal__runs">
-                  {runs.slice(0, 10).map((r) => (
-                    <button
-                      key={r.id}
-                      className={"terminal__run " + ((activeRunId || runs[0]?.id) === r.id ? "is-active" : "")}
-                      onClick={() => setActiveRunId(r.id)}
-                      title={new Date(r.ts).toLocaleString()}
-                    >
-                      {r.title}
-                    </button>
-                  ))}
-                </div>
+                {/* Single-slot mode: no run chips/history */}
                 <div className="terminal__actions">
                   <button className="btn" onClick={() => { setRuns([]); setActiveRunId(null); }} disabled={busy}>
                     Clear
