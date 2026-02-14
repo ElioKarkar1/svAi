@@ -15,7 +15,7 @@ type ToolchainStatus = {
 
 type LintResult = { code: number; output: string };
 
-type BottomTab = "problems" | "log" | "ai";
+type BottomTab = "problems" | "terminal" | "ai";
 
 type ActivityTab = "explorer" | "problems" | "log" | "ai" | "settings";
 
@@ -48,7 +48,7 @@ export default function App() {
 
   const [activityTab, setActivityTab] = useState<ActivityTab>("explorer");
 
-  const [bottomTab, setBottomTab] = useState<BottomTab>("log");
+  const [bottomTab, setBottomTab] = useState<BottomTab>("terminal");
   const [logText, setLogText] = useState<string>("");
 
   const [cursorLine, setCursorLine] = useState<number>(1);
@@ -97,7 +97,7 @@ export default function App() {
         setBusy(false);
       }
     } catch (e: any) {
-      setBottomTab("log");
+      setBottomTab("terminal");
       setLogText(`Open Project failed: ${String(e ?? "")}`);
     }
   };
@@ -124,7 +124,7 @@ export default function App() {
       setActiveRel(relPath);
     } catch (e: any) {
       setLogText(`Open failed: ${String(e ?? "")}`);
-      setBottomTab("log");
+      setBottomTab("terminal");
     } finally {
       setBusy(false);
     }
@@ -155,7 +155,7 @@ export default function App() {
   const lint = async () => {
     if (!root) return;
     setBusy(true);
-    setBottomTab("log");
+    setBottomTab("terminal");
     try {
       const res = (await invoke("project_lint", {
         root,
@@ -251,7 +251,7 @@ export default function App() {
             aria-label="Log"
             onClick={() => {
               setActivityTab("log");
-              setBottomTab("log");
+              setBottomTab("terminal");
             }}
           >
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -421,16 +421,16 @@ export default function App() {
           <button className={"bottomTab " + (bottomTab === "problems" ? "is-active" : "")} onClick={() => setBottomTab("problems")}>
             Problems
           </button>
-          <button className={"bottomTab " + (bottomTab === "log" ? "is-active" : "")} onClick={() => setBottomTab("log")}>
-            Log
+          <button className={"bottomTab " + (bottomTab === "terminal" ? "is-active" : "")} onClick={() => setBottomTab("terminal")}>
+            Terminal
           </button>
           <button className={"bottomTab " + (bottomTab === "ai" ? "is-active" : "")} onClick={() => setBottomTab("ai")}>
-            AI
+            AI Assist
           </button>
         </div>
         <div className="panel">
           {bottomTab === "problems" ? problemsText : null}
-          {bottomTab === "log" ? logText : null}
+          {bottomTab === "terminal" ? logText : null}
           {bottomTab === "ai" ? <div className="muted">AI integration coming next (local Clawdbot-powered explain/fix).</div> : null}
         </div>
       </div>
