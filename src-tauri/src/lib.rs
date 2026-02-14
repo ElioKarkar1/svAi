@@ -343,7 +343,6 @@ fn msys_verilator_root_from_bin(vbin: &str) -> Option<String> {
     if !s.to_lowercase().contains("\\msys64\\") {
         return None;
     }
-    // Typical: C:\msys64\ucrt64\bin\verilator_bin.exe
     let lower = s.to_lowercase();
     if !lower.ends_with("\\verilator_bin.exe") {
         return None;
@@ -355,6 +354,20 @@ fn msys_verilator_root_from_bin(vbin: &str) -> Option<String> {
         .trim_end_matches('\\')
         .to_string();
     Some(format!("{}\\share\\verilator", share))
+}
+
+fn msys_verilator_root_posix_from_bin(vbin: &str) -> Option<String> {
+    let s = vbin.replace('\\', "/").to_lowercase();
+    if !s.contains("/msys64/") || !s.ends_with("/verilator_bin.exe") {
+        return None;
+    }
+    if s.contains("/ucrt64/bin/") {
+        return Some("/ucrt64/share/verilator".to_string());
+    }
+    if s.contains("/mingw64/bin/") {
+        return Some("/mingw64/share/verilator".to_string());
+    }
+    None
 }
 
 fn ensure_svlab_dir(root: &Path) -> Result<PathBuf, String> {
@@ -524,7 +537,11 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
     // 1) Verilator codegen (generates obj_dir)
     let mut vcmd = Command::new(&vpath);
     vcmd.current_dir(&rootp);
-    if let Some(vroot) = msys_verilator_root_from_bin(&vpath) {
+    // MSYS2 Windows install: set VERILATOR_ROOT for both (a) finding built-ins and (b) generating makefiles
+    // that invoke scripts via MSYS-friendly paths.
+    if let Some(vroot_posix) = msys_verilator_root_posix_from_bin(&vpath) {
+        vcmd.env("VERILATOR_ROOT", vroot_posix);
+    } else if let Some(vroot) = msys_verilator_root_from_bin(&vpath) {
         vcmd.env("VERILATOR_ROOT", vroot);
     }
 
@@ -584,6 +601,9 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
         // Make MSYS2 behave when invoked from a Windows process.
         mcmd.env("CHERE_INVOKING", "1");
         mcmd.env("MSYSTEM", "UCRT64");
+        if let Some(vroot_posix) = msys_verilator_root_posix_from_bin(&vpath) {
+            mcmd.env("VERILATOR_ROOT", vroot_posix);
+        }
     }
 
     mcmd.arg("-C");
