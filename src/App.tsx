@@ -6,6 +6,13 @@ import "./App.css";
 
 type FsNode = { path: string; name: string; is_dir: boolean };
 
+type TreeNode = {
+  name: string;
+  path: string; // relative
+  isDir: boolean;
+  children: TreeNode[];
+};
+
 type ToolchainStatus = {
   verilator_path: string;
   ok: boolean;
@@ -62,6 +69,7 @@ export default function App() {
   const [root, setRoot] = useState<string>("");
   const [nodes, setNodes] = useState<FsNode[]>([]);
   const [selected, setSelected] = useState<string>("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const [toolchain, setToolchain] = useState<ToolchainStatus | null>(null);
 
@@ -152,6 +160,16 @@ export default function App() {
   const refreshTree = async (r: string) => {
     const items = (await invoke("project_list", { root: r })) as FsNode[];
     setNodes(items);
+
+    // Expand top-level dirs by default.
+    const next: Record<string, boolean> = {};
+    for (const n of items) {
+      if (n.is_dir) {
+        const p = (n.path || "").replace(/\\/g, "/");
+        if (!p.includes("/")) next[p] = true;
+      }
+    }
+    setExpanded((prev) => ({ ...next, ...prev }));
   };
 
   const openProject = async () => {
@@ -170,6 +188,7 @@ export default function App() {
         setActiveRel("");
         setSelected("");
         setProblems([]);
+        setExpanded({});
       } finally {
         setBusy(false);
       }
@@ -181,24 +200,25 @@ export default function App() {
 
   const openFile = async (relPath: string) => {
     if (!root) return;
+    const normalized = (relPath || "").replace(/\\/g, "/");
     setBusy(true);
     try {
-      const existing = openTabs.find((t) => t.relPath === relPath) ?? null;
+      const existing = openTabs.find((t) => t.relPath === normalized) ?? null;
       if (existing) {
-        setActiveRel(relPath);
+        setActiveRel(normalized);
         return;
       }
 
-      const text = (await invoke("project_read_file", { root, relPath })) as string;
+      const text = (await invoke("project_read_file", { root, relPath: normalized })) as string;
       const tab: OpenTab = {
-        relPath,
+        relPath: normalized,
         title: relPath.split("/").slice(-1)[0],
         language: detectLanguage(relPath),
         dirty: false,
         value: text ?? "",
       };
       setOpenTabs((prev) => [...prev, tab]);
-      setActiveRel(relPath);
+      setActiveRel(normalized);
     } catch (e: any) {
       setBottomTab("terminal");
       pushRun({ title: "Open file (error)", output: `Open failed: ${String(e ?? "")}` });
@@ -282,6 +302,59 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, root]);
+
+  const isInterestingFile = (p: string) => {
+    const lower = (p || "").toLowerCase();
+    return lower.endsWith(".sv") || lower.endsWith(".svh") || lower.endsWith(".v") || lower.endsWith(".json") || lower.endsWith(".f");
+  };
+
+  const buildTree = (items: FsNode[]): TreeNode => {
+    const rootNode: TreeNode = { name: "", path: "", isDir: true, children: [] };
+
+    const ensureChild = (parent: TreeNode, name: string, path: string, isDir: boolean): TreeNode => {
+      const existing = parent.children.find((c) => c.name === name && c.isDir === isDir);
+      if (existing) return existing;
+      const n: TreeNode = { name, path, isDir, children: [] };
+      parent.children.push(n);
+      return n;
+    };
+
+    for (const it of items) {
+      const rel = (it.path || "").replace(/\\/g, "/");
+      if (!rel) continue;
+      const parts = rel.split("/").filter(Boolean);
+      if (parts.length === 0) continue;
+
+      // Only include interesting files, but include their parent dirs.
+      if (!it.is_dir && !isInterestingFile(rel)) continue;
+
+      let cur = rootNode;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const subPath = parts.slice(0, i + 1).join("/");
+        const isLast = i === parts.length - 1;
+        const nodeIsDir = isLast ? !!it.is_dir : true;
+        cur = ensureChild(cur, part, subPath, nodeIsDir);
+      }
+    }
+
+    const sortRec = (n: TreeNode) => {
+      n.children.sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      for (const c of n.children) sortRec(c);
+    };
+    sortRec(rootNode);
+
+    return rootNode;
+  };
+
+  const tree = useMemo(() => buildTree(nodes), [nodes]);
+
+  const toggleExpanded = (p: string) => {
+    setExpanded((prev) => ({ ...prev, [p]: !prev[p] }));
+  };
 
   const rootName = useMemo(() => {
     if (!root) return "No folder";
@@ -427,24 +500,48 @@ export default function App() {
                 ))}
 
                 <div className="sectionTitle">FILES</div>
-                {nodes
-                  .filter((n) => !n.is_dir)
-                  .filter((n) => {
-                    const p = n.path.toLowerCase();
-                    return p.endsWith(".sv") || p.endsWith(".svh") || p.endsWith(".v") || p.endsWith(".json") || p.endsWith(".f");
-                  })
-                  .map((n) => (
-                    <button
-                      key={n.path}
-                      className={"treeItem " + (selected === n.path ? "is-selected" : "")}
-                      onClick={() => {
-                        setSelected(n.path);
-                        void openFile(n.path);
-                      }}
-                    >
-                      {n.path}
-                    </button>
-                  ))}
+                <div className="fileTree">
+                  {(() => {
+                    const renderNode = (n: TreeNode, depth: number) => {
+                      const pad = 8 + depth * 12;
+                      if (n.isDir) {
+                        const isOpen = expanded[n.path] ?? false;
+                        return (
+                          <div key={n.path}>
+                            <button
+                              className={"treeRow treeRow--dir " + (selected === n.path ? "is-selected" : "")}
+                              style={{ paddingLeft: pad }}
+                              onClick={() => {
+                                setSelected(n.path);
+                                toggleExpanded(n.path);
+                              }}
+                            >
+                              <span className="chev">{isOpen ? "▾" : "▸"}</span>
+                              <span className="treeName">{n.name}</span>
+                            </button>
+                            {isOpen ? n.children.map((c) => renderNode(c, depth + 1)) : null}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <button
+                          key={n.path}
+                          className={"treeRow treeRow--file " + (selected === n.path ? "is-selected" : "")}
+                          style={{ paddingLeft: pad + 18 }}
+                          onClick={() => {
+                            setSelected(n.path);
+                            void openFile(n.path);
+                          }}
+                        >
+                          <span className="treeName">{n.name}</span>
+                        </button>
+                      );
+                    };
+
+                    return tree.children.length ? tree.children.map((c) => renderNode(c, 0)) : <div className="muted">(no files)</div>;
+                  })()}
+                </div>
               </>
             )}
           </div>

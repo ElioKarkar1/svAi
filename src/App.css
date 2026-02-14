@@ -200,6 +200,48 @@ button, input, textarea {
 .treeItem:hover { background: rgba(255,255,255,0.05); }
 .treeItem.is-selected { border-color: var(--accent2); background: rgba(0,122,204,0.12); }
 
+.fileTree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.treeRow {
+  width: 100%;
+  text-align: left;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(255,255,255,0.80);
+  cursor: pointer;
+}
+
+.treeRow:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.treeRow.is-selected {
+  border-color: var(--accent2);
+  background: rgba(0,122,204,0.12);
+}
+
+.chev {
+  width: 14px;
+  color: rgba(255,255,255,0.55);
+  display: inline-flex;
+  justify-content: center;
+}
+
+.treeName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty {
   padding: 10px;
   border: 1px dashed rgba(255,255,255,0.10);
