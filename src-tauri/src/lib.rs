@@ -534,6 +534,13 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
     let _enable_fst = cfg.verilator_args.iter().any(|x| x == "--trace-fst") || cfg.verilator_args.iter().any(|x| x == "--trace");
     let _sim_main = generate_sim_main_cpp(&rootp, top, true)?;
 
+    // 0) Clean obj_dir to avoid stale/inconsistent incremental builds (early MVP).
+    let obj_dir = rootp.join("obj_dir");
+    if obj_dir.exists() {
+        // best-effort; ignore errors if something holds locks
+        let _ = fs::remove_dir_all(&obj_dir);
+    }
+
     // 1) Verilator codegen (generates obj_dir)
     let mut vcmd = Command::new(&vpath);
     vcmd.current_dir(&rootp);
