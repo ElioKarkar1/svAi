@@ -17,6 +17,8 @@ type LintResult = { code: number; output: string };
 
 type BottomTab = "problems" | "log" | "ai";
 
+type ActivityTab = "explorer" | "problems" | "log" | "ai" | "settings";
+
 type OpenTab = {
   relPath: string;
   title: string;
@@ -44,8 +46,13 @@ export default function App() {
   const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
   const [activeRel, setActiveRel] = useState<string>("");
 
+  const [activityTab, setActivityTab] = useState<ActivityTab>("explorer");
+
   const [bottomTab, setBottomTab] = useState<BottomTab>("log");
   const [logText, setLogText] = useState<string>("");
+
+  const [cursorLine, setCursorLine] = useState<number>(1);
+  const [cursorCol, setCursorCol] = useState<number>(1);
 
   // placeholder for parsed problems later
   const problemsText = useMemo(() => {
@@ -176,58 +183,145 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, root]);
 
+  const rootName = useMemo(() => {
+    if (!root) return "No folder";
+    const parts = root.replace(/\\/g, "/").split("/").filter(Boolean);
+    return parts[parts.length - 1] || root;
+  }, [root]);
+
+  const crumbs = useMemo(() => {
+    if (!root) return "";
+    const p = activeTab?.relPath ? activeTab.relPath : "";
+    return p ? `${rootName} › ${p}` : rootName;
+  }, [root, rootName, activeTab?.relPath]);
+
   return (
     <div className="app">
-      <div className="topbar">
-        <div className="topbar__left">
-          <button className="btn" onClick={() => void openProject()} disabled={busy}>
-            Open Project
-          </button>
+      <div className="titlebar">
+        <div className="titlebar__left">
+          <div className="titlebar__app">svAi</div>
+          <div className="titlebar__crumbs">{crumbs || ""}</div>
+        </div>
+        <div className="titlebar__right">
           <button className="btn" onClick={() => void lint()} disabled={busy || !root || !toolchain?.ok}>
             Lint
           </button>
           <button className="btn" onClick={() => void saveActive()} disabled={busy || !activeTab || !activeTab.dirty}>
             Save
           </button>
-          <span className="muted">{root ? root : "No project"}</span>
-        </div>
-
-        <div className="topbar__right">
           <span className={"pill " + (toolchain?.ok ? "pill--ok" : "pill--bad")}>
             {toolchain?.ok ? `Verilator OK` : "Verilator missing"}
-          </span>
-          <span className="muted" style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis" }}>
-            {toolchain?.ok ? toolchain?.verilator_path : toolchain?.error}
           </span>
         </div>
       </div>
 
-      <div className="main">
+      <div className="workarea">
+        <aside className="activity">
+          <button
+            className={"activity__btn " + (activityTab === "explorer" ? "is-active" : "")}
+            title="Explorer"
+            onClick={() => setActivityTab("explorer")}
+          >
+            E
+          </button>
+          <button
+            className={"activity__btn " + (activityTab === "problems" ? "is-active" : "")}
+            title="Problems"
+            onClick={() => {
+              setActivityTab("problems");
+              setBottomTab("problems");
+            }}
+          >
+            !
+          </button>
+          <button
+            className={"activity__btn " + (activityTab === "log" ? "is-active" : "")}
+            title="Log"
+            onClick={() => {
+              setActivityTab("log");
+              setBottomTab("log");
+            }}
+          >
+            ≡
+          </button>
+          <button
+            className={"activity__btn " + (activityTab === "ai" ? "is-active" : "")}
+            title="AI"
+            onClick={() => {
+              setActivityTab("ai");
+              setBottomTab("ai");
+            }}
+          >
+            AI
+          </button>
+          <div style={{ flex: 1 }} />
+          <button
+            className={"activity__btn " + (activityTab === "settings" ? "is-active" : "")}
+            title="Settings"
+            onClick={() => setActivityTab("settings")}
+          >
+            ⚙
+          </button>
+        </aside>
+
         <aside className="sidebar">
-          <div className="sidebar__title">Explorer</div>
-          {!root ? <div className="muted">Open a project folder.</div> : null}
-          {root ? (
-            <div>
-              {nodes
-                .filter((n) => !n.is_dir)
-                .filter((n) => {
-                  const p = n.path.toLowerCase();
-                  return p.endsWith(".sv") || p.endsWith(".svh") || p.endsWith(".v") || p.endsWith(".json") || p.endsWith(".f");
-                })
-                .map((n) => (
+          <div className="sidebar__head">
+            <div>EXPLORER</div>
+            <div className="muted">{root ? rootName : ""}</div>
+          </div>
+
+          <div className="sidebar__body">
+            {!root ? (
+              <div className="empty">
+                <div style={{ fontWeight: 650, marginBottom: 6 }}>No folder opened</div>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
+                  Open a folder to start browsing and linting SystemVerilog.
+                </div>
+                <button className="btn" onClick={() => void openProject()} disabled={busy}>
+                  Open Folder
+                </button>
+                {toolchain?.ok ? null : (
+                  <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+                    {toolchain?.error}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="sectionTitle">OPEN EDITORS</div>
+                {openTabs.length === 0 ? <div className="muted" style={{ fontSize: 12 }}>(none)</div> : null}
+                {openTabs.map((t) => (
                   <button
-                    key={n.path}
-                    className={"treeItem " + (selected === n.path ? "is-selected" : "")}
-                    onClick={() => {
-                      setSelected(n.path);
-                      void openFile(n.path);
-                    }}
+                    key={t.relPath}
+                    className={"treeItem " + (t.relPath === activeRel ? "is-selected" : "")}
+                    onClick={() => setActiveRel(t.relPath)}
                   >
-                    {n.path}
+                    {t.title}{t.dirty ? " *" : ""}
                   </button>
                 ))}
-            </div>
-          ) : null}
+
+                <div className="sectionTitle">FILES</div>
+                {nodes
+                  .filter((n) => !n.is_dir)
+                  .filter((n) => {
+                    const p = n.path.toLowerCase();
+                    return p.endsWith(".sv") || p.endsWith(".svh") || p.endsWith(".v") || p.endsWith(".json") || p.endsWith(".f");
+                  })
+                  .map((n) => (
+                    <button
+                      key={n.path}
+                      className={"treeItem " + (selected === n.path ? "is-selected" : "")}
+                      onClick={() => {
+                        setSelected(n.path);
+                        void openFile(n.path);
+                      }}
+                    >
+                      {n.path}
+                    </button>
+                  ))}
+              </>
+            )}
+          </div>
         </aside>
 
         <section className="editor">
@@ -260,6 +354,17 @@ export default function App() {
                 theme="vs-dark"
                 language={activeTab.language}
                 value={activeTab.value}
+                onMount={(ed) => {
+                  const pos = ed.getPosition();
+                  if (pos) {
+                    setCursorLine(pos.lineNumber);
+                    setCursorCol(pos.column);
+                  }
+                  ed.onDidChangeCursorPosition((e) => {
+                    setCursorLine(e.position.lineNumber);
+                    setCursorCol(e.position.column);
+                  });
+                }}
                 onChange={(val) => {
                   const v = val ?? "";
                   setOpenTabs((prev) =>
@@ -275,6 +380,7 @@ export default function App() {
                   minimap: { enabled: false },
                   wordWrap: "on",
                   scrollBeyondLastLine: false,
+                  padding: { top: 10 },
                 }}
               />
             ) : (
@@ -300,6 +406,16 @@ export default function App() {
           {bottomTab === "problems" ? problemsText : null}
           {bottomTab === "log" ? logText : null}
           {bottomTab === "ai" ? <div className="muted">AI integration coming next (local Clawdbot-powered explain/fix).</div> : null}
+        </div>
+      </div>
+
+      <div className="statusbar">
+        <div className="statusbar__left">
+          <div className="statusbar__item">{toolchain?.ok ? "Verilator: OK" : "Verilator: missing"}</div>
+          <div className="statusbar__item">{root ? `Folder: ${rootName}` : "No folder"}</div>
+        </div>
+        <div className="statusbar__right">
+          <div className="statusbar__item">Ln {cursorLine}, Col {cursorCol}</div>
         </div>
       </div>
     </div>
