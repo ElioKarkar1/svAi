@@ -408,6 +408,109 @@ fn load_or_init_config(root: &Path) -> Result<SvlabConfig, String> {
     }
 }
 
+fn write_config(root: &Path, cfg: &SvlabConfig) -> Result<(), String> {
+    let p = root.join(".svlab.json");
+    write_json(&p, cfg)
+}
+
+fn parse_filelist(root: &Path, rel: &str) -> Vec<String> {
+    let p = root.join(rel);
+    let Ok(s) = fs::read_to_string(&p) else { return vec![]; };
+    s.lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .filter(|l| !l.starts_with('#') && !l.starts_with("//"))
+        .map(|l| l.replace('\\', "/"))
+        .collect()
+}
+
+fn extract_module_names(text: &str) -> Vec<String> {
+    // Simple lexer-free scan for lines starting with `module <name>`.
+    // Good enough for most SV projects; avoids pulling in regex crates.
+    let mut out: Vec<String> = vec![];
+    for raw in text.lines() {
+        let line = raw.trim_start();
+        if line.starts_with("module ") || line.starts_with("module\t") {
+            let rest = line.trim_start_matches("module").trim();
+            let name = rest
+                .split(|c: char| c.is_whitespace() || c == '(' || c == '#' || c == ';')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if !name.is_empty() {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TopDetectResult {
+    candidates: Vec<String>,
+    recommended: String,
+    current: String,
+}
+
+#[tauri::command]
+fn project_detect_tops(root: String) -> Result<TopDetectResult, String> {
+    let rootp = PathBuf::from(&root);
+    let _canon = rootp.canonicalize().map_err(|e| format!("Invalid root: {e}"))?;
+    let cfg = load_or_init_config(&rootp)?;
+
+    let mut mods: Vec<String> = vec![];
+
+    // Prefer filelist.
+    let fl = cfg.filelist.trim();
+    let flp = rootp.join(fl);
+    if flp.exists() {
+        for rel in parse_filelist(&rootp, fl).into_iter() {
+            let p = rootp.join(&rel);
+            if !p.exists() { continue; }
+            if let Ok(t) = fs::read_to_string(&p) {
+                mods.extend(extract_module_names(&t));
+            }
+        }
+    } else {
+        // Fallback: scan a few dirs.
+        for ent in walkdir::WalkDir::new(&rootp).follow_links(false).max_depth(6).into_iter().flatten() {
+            if !ent.file_type().is_file() { continue; }
+            let p = ent.path();
+            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+            if !(ext.eq_ignore_ascii_case("sv") || ext.eq_ignore_ascii_case("svh") || ext.eq_ignore_ascii_case("v")) { continue; }
+            if let Ok(t) = fs::read_to_string(p) {
+                mods.extend(extract_module_names(&t));
+            }
+        }
+    }
+
+    // uniq + sort
+    mods.sort();
+    mods.dedup();
+
+    let current = cfg.top.trim().to_string();
+    let recommended = if !current.is_empty() {
+        current.clone()
+    } else {
+        mods.iter().find(|m| m.starts_with("tb_"))
+            .or_else(|| mods.iter().find(|m| m.to_lowercase().starts_with("tb")))
+            .or_else(|| mods.iter().find(|m| m.to_lowercase().contains("tb")))
+            .cloned()
+            .unwrap_or_else(|| mods.get(0).cloned().unwrap_or_default())
+    };
+
+    Ok(TopDetectResult { candidates: mods, recommended, current })
+}
+
+#[tauri::command]
+fn project_set_top(root: String, top: String) -> Result<(), String> {
+    let rootp = PathBuf::from(&root);
+    let _canon = rootp.canonicalize().map_err(|e| format!("Invalid root: {e}"))?;
+    let mut cfg = load_or_init_config(&rootp)?;
+    cfg.top = top.trim().to_string();
+    write_config(&rootp, &cfg)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LintResult {
     code: i32,
@@ -854,6 +957,8 @@ pub fn run() {
             project_rename,
             project_delete,
             project_lint,
+            project_detect_tops,
+            project_set_top,
             project_build,
             project_run,
             project_open_waves

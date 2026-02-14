@@ -32,6 +32,8 @@ type BuildResult = { code: number; output: string; exe_path: string; waves_path:
 
 type RunResult = { code: number; output: string };
 
+type TopDetectResult = { candidates: string[]; recommended: string; current: string };
+
 type LintResult = { code: number; output: string };
 
 type BottomTab = "problems" | "terminal" | "ai";
@@ -106,6 +108,8 @@ export default function App() {
   const [problems, setProblems] = useState<Problem[]>([]);
   const [lastBuiltExe, setLastBuiltExe] = useState<string>("");
   const [_lastWaves, setLastWaves] = useState<string>("");
+  const [topCandidates, setTopCandidates] = useState<string[]>([]);
+  const [topValue, setTopValue] = useState<string>("");
 
   const [cursorLine, setCursorLine] = useState<number>(1);
   const [cursorCol, setCursorCol] = useState<number>(1);
@@ -234,6 +238,17 @@ export default function App() {
         setSelected("");
         setProblems([]);
         setExpanded({});
+
+        try {
+          const t = (await invoke("project_detect_tops", { root: picked })) as TopDetectResult;
+          setTopCandidates(t.candidates || []);
+          setTopValue(t.current || t.recommended || "");
+          if (!t.current && t.recommended) {
+            pushRun({ title: "Top detect", output: `Recommended top: ${t.recommended}` });
+          }
+        } catch {
+          // ignore
+        }
       } finally {
         setBusy(false);
       }
@@ -461,6 +476,47 @@ export default function App() {
         <div className="titlebar__right">
           <button className="btn" onClick={() => void lint()} disabled={busy || !root || !toolchain?.ok}>
             Lint
+          </button>
+
+          <select
+            className="btn"
+            value={topValue}
+            onChange={(e) => setTopValue(e.target.value)}
+            disabled={busy || !root || topCandidates.length === 0}
+            title="Top module"
+          >
+            <option value="">(top module)</option>
+            {topCandidates.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn"
+            onClick={() =>
+              void (async () => {
+                if (!root) return;
+                const top = (topValue || "").trim();
+                if (!top) {
+                  pushRun({ title: "Set Top (error)", output: "Choose a top module first." });
+                  setBottomTab("terminal");
+                  return;
+                }
+                setBusy(true);
+                try {
+                  await invoke("project_set_top", { root, top });
+                  pushRun({ title: "Set Top", output: `Top module set to: ${top}` });
+                } catch (e: any) {
+                  pushRun({ title: "Set Top (error)", output: String(e ?? "") });
+                } finally {
+                  setBusy(false);
+                }
+              })()
+            }
+            disabled={busy || !root || !(topValue || "").trim()}
+          >
+            Set Top
           </button>
           <button
             className="btn"
