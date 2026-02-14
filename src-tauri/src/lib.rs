@@ -122,6 +122,39 @@ fn run_cmd_capture(mut cmd: Command) -> Result<(i32, String), String> {
     Ok((code, s.trim().to_string()))
 }
 
+fn is_msys2_path(p: &str) -> bool {
+    let l = p.to_lowercase();
+    l.contains("\\msys64\\") || l.contains("/msys64/")
+}
+
+fn msys2_bash_path() -> String {
+    "C:\\msys64\\usr\\bin\\bash.exe".to_string()
+}
+
+fn run_msys2_bash(root: &Path, script: &str) -> Result<(i32, String), String> {
+    let bash = msys2_bash_path();
+    if !PathBuf::from(&bash).exists() {
+        return Err("MSYS2 bash.exe not found at C:\\msys64\\usr\\bin\\bash.exe".to_string());
+    }
+
+    // -l for login env, -c for command
+    let mut cmd = Command::new(&bash);
+    cmd.current_dir(root);
+    cmd.arg("-lc");
+    cmd.arg(script);
+
+    // Ensure MSYS knows we're in UCRT64 context.
+    cmd.env("CHERE_INVOKING", "1");
+    cmd.env("MSYSTEM", "UCRT64");
+
+    // Ensure core utils + toolchain resolve.
+    let cur_path = std::env::var("PATH").unwrap_or_default();
+    let prefix = "C:\\msys64\\usr\\bin;C:\\msys64\\ucrt64\\bin;";
+    cmd.env("PATH", format!("{}{}", prefix, cur_path));
+
+    run_cmd_capture(cmd)
+}
+
 fn make_candidates() -> Vec<String> {
     let mut c = vec!["make".to_string()];
     if cfg!(windows) {
@@ -444,10 +477,36 @@ fn project_lint(root: String, verilator_path: Option<String>) -> Result<LintResu
         return Err("Verilator not found. Configure toolchain path.".to_string());
     }
 
+    // Prefer filelist if present.
+    let fl = cfg.filelist.trim();
+    let flp = rootp.join(fl);
+
+    if cfg!(windows) && is_msys2_path(&vpath) {
+        // Run inside MSYS2 bash so /ucrt64 paths + python scripts work.
+        let mut parts: Vec<String> = vec![];
+        parts.push(format!("\"{}\"", vpath.replace('"', "\\\"")));
+        parts.push("--lint-only".to_string());
+        for a in cfg.verilator_args.iter() {
+            parts.push(a.clone());
+        }
+        for d in cfg.include_dirs.iter() {
+            parts.push(format!("-I{}", d));
+        }
+        for def in cfg.defines.iter() {
+            parts.push(format!("-D{}", def));
+        }
+        if flp.exists() {
+            parts.push("-f".to_string());
+            parts.push(fl.to_string());
+        }
+        let cmdline = format!("VERILATOR_ROOT=/ucrt64/share/verilator {}", parts.join(" "));
+        let (code, output) = run_msys2_bash(&rootp, &cmdline)?;
+        return Ok(LintResult { code, output });
+    }
+
     let mut cmd = Command::new(&vpath);
     cmd.current_dir(&rootp);
 
-    // MSYS2 Windows install: need VERILATOR_ROOT so built-in std files resolve.
     if let Some(vroot) = msys_verilator_root_from_bin(&vpath) {
         cmd.env("VERILATOR_ROOT", vroot);
     }
@@ -463,14 +522,10 @@ fn project_lint(root: String, verilator_path: Option<String>) -> Result<LintResu
         cmd.arg(format!("-D{}", def));
     }
 
-    // Prefer filelist if present.
-    let fl = cfg.filelist.trim();
-    let flp = rootp.join(fl);
     if flp.exists() {
         cmd.arg("-f");
         cmd.arg(fl);
     } else {
-        // fallback: scan a few dirs
         for ent in walkdir::WalkDir::new(&rootp)
             .follow_links(false)
             .max_depth(6)
@@ -544,12 +599,12 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
     // 1) Verilator codegen (generates obj_dir)
     let mut vcmd = Command::new(&vpath);
     vcmd.current_dir(&rootp);
-    // MSYS2 Windows install: set VERILATOR_ROOT for both (a) finding built-ins and (b) generating makefiles
-    // that invoke scripts via MSYS-friendly paths.
-    if let Some(vroot_posix) = msys_verilator_root_posix_from_bin(&vpath) {
-        vcmd.env("VERILATOR_ROOT", vroot_posix);
-    } else if let Some(vroot) = msys_verilator_root_from_bin(&vpath) {
-        vcmd.env("VERILATOR_ROOT", vroot);
+    // MSYS2 builds: we'll invoke verilator via bash -lc so paths resolve.
+    // Non-MSYS builds still get VERILATOR_ROOT set to help find built-ins.
+    if !cfg!(windows) || !is_msys2_path(&vpath) {
+        if let Some(vroot) = msys_verilator_root_from_bin(&vpath) {
+            vcmd.env("VERILATOR_ROOT", vroot);
+        }
     }
 
     vcmd.arg("-cc");
@@ -589,7 +644,37 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
         }
     }
 
-    let (vcode, vout) = run_cmd_capture(vcmd)?;
+    let (vcode, vout) = if cfg!(windows) && is_msys2_path(&vpath) {
+        // Run via MSYS2 bash so VERILATOR_ROOT=/ucrt64/... and python scripts resolve.
+        let mut parts: Vec<String> = vec![];
+        parts.push(format!("\"{}\"", vpath.replace('"', "\\\"")));
+        parts.push("-cc".to_string());
+        for a in cfg.verilator_args.iter() {
+            parts.push(a.clone());
+        }
+        parts.push("--exe".to_string());
+        parts.push(".svlab/sim_main.cpp".to_string());
+        parts.push("--top-module".to_string());
+        parts.push(top.to_string());
+        parts.push("--trace-fst".to_string());
+        for d in cfg.include_dirs.iter() {
+            parts.push(format!("-I{}", d));
+        }
+        for def in cfg.defines.iter() {
+            parts.push(format!("-D{}", def));
+        }
+        let fl = cfg.filelist.trim();
+        let flp = rootp.join(fl);
+        if flp.exists() {
+            parts.push("-f".to_string());
+            parts.push(fl.to_string());
+        }
+        let cmdline = format!("VERILATOR_ROOT=/ucrt64/share/verilator {}", parts.join(" "));
+        run_msys2_bash(&rootp, &cmdline)?
+    } else {
+        run_cmd_capture(vcmd)?
+    };
+
     if vcode != 0 {
         return Ok(BuildResult { code: vcode, output: vout, exe_path: "".to_string(), waves_path: "".to_string() });
     }
@@ -602,15 +687,22 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
     // If using MSYS2 tools from Windows, ensure core Unix utils resolve (sh, rm, cat, xargs, uname) and
     // prefer MSYS2 toolchain (ar) over anything else on PATH (e.g. Strawberry Perl's binutils).
     if cfg!(windows) && mpath.to_lowercase().contains("\\msys64\\") {
-        let cur_path = std::env::var("PATH").unwrap_or_default();
-        let prefix = "C:\\msys64\\usr\\bin;C:\\msys64\\ucrt64\\bin;";
-        mcmd.env("PATH", format!("{}{}", prefix, cur_path));
-        // Make MSYS2 behave when invoked from a Windows process.
-        mcmd.env("CHERE_INVOKING", "1");
-        mcmd.env("MSYSTEM", "UCRT64");
-        if let Some(vroot_posix) = msys_verilator_root_posix_from_bin(&vpath) {
-            mcmd.env("VERILATOR_ROOT", vroot_posix);
-        }
+        // Run make via MSYS2 bash so /usr/bin tools resolve cleanly.
+        let cmdline = format!(
+            "VERILATOR_ROOT=/ucrt64/share/verilator \"{}\" -C obj_dir -f {} -j",
+            mpath.replace('"', "\\\""),
+            mk
+        );
+        let (mcode, mout) = run_msys2_bash(&rootp, &cmdline)?;
+
+        let mut out = String::new();
+        out.push_str(&vout);
+        if !out.is_empty() && !out.ends_with('\n') { out.push('\n'); }
+        out.push_str(&mout);
+
+        let exe_rel = format!("obj_dir/V{}", top);
+        let waves_rel = ".svlab/waves.fst".to_string();
+        return Ok(BuildResult { code: mcode, output: out.trim().to_string(), exe_path: exe_rel, waves_path: waves_rel });
     }
 
     mcmd.arg("-C");
