@@ -105,6 +105,7 @@ struct ToolchainStatus {
     gpp_error: String,
 }
 
+#[allow(dead_code)]
 fn canonicalize_lossy(p: &Path) -> Result<String, String> {
     p.canonicalize()
         .map_err(|e| format!("Failed to canonicalize path: {e}"))
@@ -679,6 +680,7 @@ fn msys_verilator_root_from_bin(vbin: &str) -> Option<String> {
     Some(format!("{}\\share\\verilator", share))
 }
 
+#[allow(dead_code)]
 fn msys_verilator_root_posix_from_bin(vbin: &str) -> Option<String> {
     let s = vbin.replace('\\', "/").to_lowercase();
     if !s.contains("/msys64/") || !s.ends_with("/verilator_bin.exe") {
