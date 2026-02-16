@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="g" x1="64" y1="64" x2="448" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4DD6FF"/>
+      <stop offset="1" stop-color="#B86BFF"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="48" y="48" width="416" height="416" rx="96" fill="#0B0F14"/>
+
+  <g stroke="url(#g)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" fill="none" filter="url(#glow)">
+    <rect x="156" y="164" width="200" height="200" rx="32"/>
+
+    <path d="M156 208 H124"/>
+    <path d="M156 256 H116"/>
+    <path d="M156 304 H124"/>
+
+    <path d="M356 208 H388"/>
+    <path d="M356 256 H396"/>
+    <path d="M356 304 H388"/>
+
+    <path d="M208 164 V132"/>
+    <path d="M256 164 V124"/>
+    <path d="M304 164 V132"/>
+
+    <path d="M208 364 V396"/>
+    <path d="M256 364 V404"/>
+    <path d="M304 364 V396"/>
+
+    <path d="M256 218 L270 248 L302 256 L270 264 L256 294 L242 264 L210 256 L242 248 Z"/>
+  </g>
+</svg>
