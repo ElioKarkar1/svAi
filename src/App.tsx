@@ -573,33 +573,56 @@ export default function App() {
                   await saveAllDirty();
                 }
 
-                setBusy(true);
-                setBottomTab("terminal");
+                // Ensure we have a top set (safe prompt).
+                let ensuredTop = (topValue || "").trim();
                 try {
-                  // If anything was dirty, rebuild before running.
-                  if (dirtyCount > 0) {
-                    const b = (await invoke("project_build", {
-                      root,
-                      verilatorPath: toolchain?.verilator_path || "",
-                      makePath: toolchain?.make_path || "",
-                    })) as BuildResult;
-                    pushRun({ title: `Build (${b.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: b.code, output: b.output || "" });
-                    setLastBuiltExe(b.exe_path || "");
-                    setLastWaves(b.waves_path || "");
-                    const ps = parseProblemsFromVerilator(b.output || "");
-                    setProblems(ps);
-                    if (ps.length) {
-                      setBottomTab("problems");
+                  if (!ensuredTop) {
+                    const t = (await invoke("project_detect_tops", { root })) as TopDetectResult;
+                    if (t?.candidates?.length) setTopCandidates(t.candidates);
+                    const rec = (t?.current || t?.recommended || "").trim();
+                    if (rec) {
+                      const ok = window.confirm(`Top module isn't set.\n\nSet top to: ${rec}?`);
+                      if (!ok) return;
+                      await invoke("project_set_top", { root, top: rec });
+                      ensuredTop = rec;
+                      setTopValue(rec);
+                      pushRun({ title: "Set Top", output: `Top module set to: ${rec}` });
+                    } else {
+                      pushRun({ title: "Run (error)", output: "Couldn't detect a top module. Use the top dropdown + Set Top." });
                       return;
                     }
                   }
+                } catch (e: any) {
+                  pushRun({ title: "Run (error)", output: `Top detect failed: ${String(e ?? "")}` });
+                  return;
+                }
 
-                  if (!lastBuiltExe) {
-                    pushRun({ title: "Run (error)", output: "No executable yet. Build first." });
+                setBusy(true);
+                setBottomTab("terminal");
+                try {
+                  // Always build before running (simple, reliable loop).
+                  const b = (await invoke("project_build", {
+                    root,
+                    verilatorPath: toolchain?.verilator_path || "",
+                    makePath: toolchain?.make_path || "",
+                  })) as BuildResult;
+                  pushRun({ title: `Build (${b.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: b.code, output: b.output || "" });
+                  setLastBuiltExe(b.exe_path || "");
+                  setLastWaves(b.waves_path || "");
+                  const ps = parseProblemsFromVerilator(b.output || "");
+                  setProblems(ps);
+                  if (ps.length || b.code !== 0) {
+                    setBottomTab("problems");
                     return;
                   }
-                  const res = (await invoke("project_run", { root, exeRel: lastBuiltExe })) as RunResult;
-                  pushRun({ title: `Run (${res.code === 0 ? "ok" : "exit " + res.code})`, cmd: lastBuiltExe, code: res.code, output: res.output || "" });
+
+                  const exe = b.exe_path || lastBuiltExe;
+                  if (!exe) {
+                    pushRun({ title: "Run (error)", output: "No executable produced by build." });
+                    return;
+                  }
+                  const res = (await invoke("project_run", { root, exeRel: exe })) as RunResult;
+                  pushRun({ title: `Run (${res.code === 0 ? "ok" : "exit " + res.code})`, cmd: exe, code: res.code, output: res.output || "" });
                 } catch (e: any) {
                   pushRun({ title: "Run (error)", output: String(e ?? "") });
                 } finally {
