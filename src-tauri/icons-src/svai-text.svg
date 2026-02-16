@@ -6,7 +6,7 @@
       <stop offset="1" stop-color="#B86BFF"/>
     </linearGradient>
     <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="2.5" result="b"/>
+      <feGaussianBlur stdDeviation="1.6" result="b"/>
       <feMerge>
         <feMergeNode in="b"/>
         <feMergeNode in="SourceGraphic"/>
@@ -14,13 +14,13 @@
     </filter>
   </defs>
 
-  <rect x="48" y="48" width="416" height="416" rx="96" fill="#0B0F14"/>
+  <rect x="32" y="32" width="448" height="448" rx="104" fill="#0B0F14"/>
 
-  <g stroke="url(#g)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.9" filter="url(#glow)">
-    <rect x="144" y="152" width="224" height="224" rx="40"/>
+  <g stroke="url(#g)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95" filter="url(#glow)">
+    <rect x="120" y="128" width="272" height="272" rx="48"/>
   </g>
 
   <g fill="url(#g)" filter="url(#glow)">
-    <text x="256" y="314" text-anchor="middle" font-size="180" font-weight="800" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace">sv</text>
+    <text x="256" y="338" text-anchor="middle" font-size="220" font-weight="900" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace">sv</text>
   </g>
 </svg>
