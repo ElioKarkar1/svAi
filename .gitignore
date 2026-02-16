@@ -7,10 +7,25 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies / builds
 node_modules
 dist
 dist-ssr
+
+# Local env / secrets
+.env
+.env.*
 *.local
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.mobileprovision
+id_rsa
+id_ed25519
 
 # Editor directories and files
 .vscode/*
