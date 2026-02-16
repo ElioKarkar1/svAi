@@ -38,6 +38,8 @@ const LS_LAST_ROOT = "svai.lastRoot";
 const lsTopKey = (root: string) => `svai.top.${root}`;
 const lsExeKey = (root: string) => `svai.exe.${root}`;
 const lsWavesKey = (root: string) => `svai.waves.${root}`;
+const lsLastFileKey = (root: string) => `svai.lastFile.${root}`;
+const lsCursorKey = (root: string) => `svai.cursor.${root}`;
 
 type LintResult = { code: number; output: string };
 
@@ -171,6 +173,23 @@ export default function App() {
     if (toolsMenuRef.current) toolsMenuRef.current.open = false;
   };
 
+  // Persist last active file + cursor (best-effort).
+  useEffect(() => {
+    if (!root) return;
+    if (activeRel) {
+      try {
+        localStorage.setItem(lsLastFileKey(root), activeRel);
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      localStorage.setItem(lsCursorKey(root), JSON.stringify({ line: cursorLine, col: cursorCol }));
+    } catch {
+      // ignore
+    }
+  }, [root, activeRel, cursorLine, cursorCol]);
+
   const refreshToolchain = async () => {
     try {
       const s = (await invoke("toolchain_status")) as ToolchainStatus;
@@ -265,6 +284,27 @@ export default function App() {
         const w = localStorage.getItem(lsWavesKey(picked)) || "";
         if (exe) setLastBuiltExe(exe);
         if (w) setLastWaves(w);
+      } catch {
+        // ignore
+      }
+
+      // Restore last open file + cursor position.
+      try {
+        const lastFile = (localStorage.getItem(lsLastFileKey(picked)) || "").trim();
+        const curRaw = localStorage.getItem(lsCursorKey(picked)) || "";
+        const cur = curRaw ? (JSON.parse(curRaw) as any) : null;
+        const line = Math.max(1, Number(cur?.line ?? 1));
+        const col = Math.max(1, Number(cur?.col ?? 1));
+        if (lastFile) {
+          await openFile(lastFile);
+          setTimeout(() => {
+            const ed = editorRef.current;
+            if (!ed) return;
+            ed.revealLineInCenter(line);
+            ed.setPosition({ lineNumber: line, column: col });
+            ed.focus();
+          }, 60);
+        }
       } catch {
         // ignore
       }
