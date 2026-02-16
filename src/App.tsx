@@ -34,6 +34,11 @@ type RunResult = { code: number; output: string };
 
 type TopDetectResult = { candidates: string[]; recommended: string; current: string };
 
+const LS_LAST_ROOT = "svai.lastRoot";
+const lsTopKey = (root: string) => `svai.top.${root}`;
+const lsExeKey = (root: string) => `svai.exe.${root}`;
+const lsWavesKey = (root: string) => `svai.waves.${root}`;
+
 type LintResult = { code: number; output: string };
 
 type BottomTab = "problems" | "terminal" | "ai";
@@ -222,37 +227,72 @@ export default function App() {
     setExpanded((prev) => ({ ...defaults, ...persisted, ...prev }));
   };
 
+  const loadProject = async (picked: string, announce = true) => {
+    if (!picked) return;
+    setBusy(true);
+    setPhase("idle");
+    setBottomTab("terminal");
+    try {
+      setRoot(picked);
+      try {
+        localStorage.setItem(LS_LAST_ROOT, picked);
+      } catch {
+        // ignore
+      }
+
+      if (announce) pushRun({ title: "Open Folder", output: `Opened: ${picked}` });
+
+      await refreshTree(picked);
+      await refreshToolchain();
+      setOpenTabs([]);
+      setActiveRel("");
+      setSelected("");
+      setProblems([]);
+      setExpanded({});
+
+      // Restore last exe/waves for this root.
+      try {
+        const exe = localStorage.getItem(lsExeKey(picked)) || "";
+        const w = localStorage.getItem(lsWavesKey(picked)) || "";
+        if (exe) setLastBuiltExe(exe);
+        if (w) setLastWaves(w);
+      } catch {
+        // ignore
+      }
+
+      // Detect tops and restore last top selection.
+      try {
+        const t = (await invoke("project_detect_tops", { root: picked })) as TopDetectResult;
+        setTopCandidates(t.candidates || []);
+        let desired = "";
+        try {
+          desired = localStorage.getItem(lsTopKey(picked)) || "";
+        } catch {
+          // ignore
+        }
+        const chosen = (desired || t.current || t.recommended || "").trim();
+        setTopValue(chosen);
+        if (announce && !t.current && t.recommended) {
+          pushRun({ title: "Top detect", output: `Recommended top: ${t.recommended}` });
+        }
+      } catch {
+        // ignore
+      }
+    } catch (e: any) {
+      pushRun({ title: "Open Folder (error)", output: `Open Project failed: ${String(e ?? "")}` });
+    } finally {
+      setBusy(false);
+      setPhase("idle");
+    }
+  };
+
   const openProject = async () => {
     try {
       const sel = await open({ directory: true, multiple: false, title: "Open SystemVerilog project" });
       const picked = typeof sel === "string" ? sel : Array.isArray(sel) ? sel[0] : null;
       if (!picked) return;
 
-      setBusy(true);
-      try {
-        setRoot(picked);
-        pushRun({ title: "Open Folder", output: `Opened: ${picked}` });
-        await refreshTree(picked);
-        await refreshToolchain();
-        setOpenTabs([]);
-        setActiveRel("");
-        setSelected("");
-        setProblems([]);
-        setExpanded({});
-
-        try {
-          const t = (await invoke("project_detect_tops", { root: picked })) as TopDetectResult;
-          setTopCandidates(t.candidates || []);
-          setTopValue(t.current || t.recommended || "");
-          if (!t.current && t.recommended) {
-            pushRun({ title: "Top detect", output: `Recommended top: ${t.recommended}` });
-          }
-        } catch {
-          // ignore
-        }
-      } finally {
-        setBusy(false);
-      }
+      await loadProject(picked, true);
     } catch (e: any) {
       setBottomTab("terminal");
       pushRun({ title: "Open Folder (error)", output: `Open Project failed: ${String(e ?? "")}` });
@@ -375,6 +415,17 @@ export default function App() {
 
   useEffect(() => {
     void refreshToolchain();
+
+    // Restore last project on startup.
+    try {
+      const last = localStorage.getItem(LS_LAST_ROOT) || "";
+      if (last.trim()) {
+        // Best-effort; if it fails user can still Open Folder.
+        void loadProject(last, false);
+      }
+    } catch {
+      // ignore
+    }
 
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -509,6 +560,11 @@ export default function App() {
                 setBusy(true);
                 try {
                   await invoke("project_set_top", { root, top });
+                  try {
+                    localStorage.setItem(lsTopKey(root), top);
+                  } catch {
+                    // ignore
+                  }
                   pushRun({ title: "Set Top", output: `Top module set to: ${top}` });
                 } catch (e: any) {
                   pushRun({ title: "Set Top (error)", output: String(e ?? "") });
@@ -552,6 +608,12 @@ export default function App() {
                   if (ps.length) setBottomTab("problems");
                   setLastBuiltExe(res.exe_path || "");
                   setLastWaves(res.waves_path || "");
+                  try {
+                    if (res.exe_path) localStorage.setItem(lsExeKey(root), res.exe_path);
+                    if (res.waves_path) localStorage.setItem(lsWavesKey(root), res.waves_path);
+                  } catch {
+                    // ignore
+                  }
                 } catch (e: any) {
                   pushRun({ title: "Build (error)", output: String(e ?? "") });
                 } finally {
@@ -616,6 +678,12 @@ export default function App() {
                   pushRun({ title: `Build (${b.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: b.code, output: b.output || "" });
                   setLastBuiltExe(b.exe_path || "");
                   setLastWaves(b.waves_path || "");
+                  try {
+                    if (b.exe_path) localStorage.setItem(lsExeKey(root), b.exe_path);
+                    if (b.waves_path) localStorage.setItem(lsWavesKey(root), b.waves_path);
+                  } catch {
+                    // ignore
+                  }
                   const ps = parseProblemsFromVerilator(b.output || "");
                   setProblems(ps);
                   if (ps.length || b.code !== 0) {
