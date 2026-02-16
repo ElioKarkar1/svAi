@@ -708,10 +708,11 @@ fn guess_make_path() -> String {
 }
 
 #[tauri::command]
-fn project_build(root: String, verilator_path: Option<String>, make_path: Option<String>) -> Result<BuildResult, String> {
-    let rootp = PathBuf::from(&root);
-    let _canon = rootp.canonicalize().map_err(|e| format!("Invalid root: {e}"))?;
-    let cfg = load_or_init_config(&rootp)?;
+async fn project_build(root: String, verilator_path: Option<String>, make_path: Option<String>) -> Result<BuildResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let _canon = rootp.canonicalize().map_err(|e| format!("Invalid root: {e}"))?;
+        let cfg = load_or_init_config(&rootp)?;
 
     let vpath = verilator_path
         .filter(|s| !s.trim().is_empty())
@@ -873,6 +874,9 @@ fn project_build(root: String, verilator_path: Option<String>, make_path: Option
     let waves_rel = ".svlab/waves.fst".to_string();
 
     Ok(BuildResult { code: mcode, output: out.trim().to_string(), exe_path: exe_rel, waves_path: waves_rel })
+    })
+    .await
+    .map_err(|e| format!("Build task failed: {e}"))?
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -919,9 +923,10 @@ fn project_open_waves(root: String, waves_rel: String, gtkwave_path: Option<Stri
 }
 
 #[tauri::command]
-fn project_run(root: String, exe_rel: String) -> Result<RunResult, String> {
-    let rootp = PathBuf::from(&root);
-    let mut exe = rootp.join(&exe_rel);
+async fn project_run(root: String, exe_rel: String) -> Result<RunResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let rootp = PathBuf::from(&root);
+        let mut exe = rootp.join(&exe_rel);
     // exe may not exist yet; don't canonicalize.
     if !exe.exists() {
         if cfg!(windows) {
@@ -936,10 +941,13 @@ fn project_run(root: String, exe_rel: String) -> Result<RunResult, String> {
             return Err("Executable not found. Build first.".to_string());
         }
     }
-    let mut cmd = Command::new(&exe);
-    cmd.current_dir(&rootp);
-    let (code, out) = run_cmd_capture(cmd)?;
-    Ok(RunResult { code, output: out })
+        let mut cmd = Command::new(&exe);
+        cmd.current_dir(&rootp);
+        let (code, out) = run_cmd_capture(cmd)?;
+        Ok(RunResult { code, output: out })
+    })
+    .await
+    .map_err(|e| format!("Run task failed: {e}"))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

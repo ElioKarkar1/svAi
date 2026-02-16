@@ -87,6 +87,7 @@ function detectLanguage(relPath: string): string {
 
 export default function App() {
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "saving" | "building" | "running">("idle");
   const [root, setRoot] = useState<string>("");
   const [nodes, setNodes] = useState<FsNode[]>([]);
   const [selected, setSelected] = useState<string>("");
@@ -315,6 +316,7 @@ export default function App() {
     if (dirtyTabs.length === 0) return;
 
     setBusy(true);
+    setPhase("saving");
     setBottomTab("terminal");
     try {
       for (const t of dirtyTabs) {
@@ -327,6 +329,7 @@ export default function App() {
       throw e;
     } finally {
       setBusy(false);
+      setPhase("idle");
     }
   };
 
@@ -470,7 +473,7 @@ export default function App() {
     <div className="app">
       <div className="titlebar">
         <div className="titlebar__left">
-          <div className="titlebar__app">svAi</div>
+          <div className="titlebar__app">svAi{phase !== "idle" ? ` · ${phase}` : ""}</div>
           <div className="titlebar__crumbs">{crumbs || ""}</div>
         </div>
         <div className="titlebar__right">
@@ -511,6 +514,7 @@ export default function App() {
                   pushRun({ title: "Set Top (error)", output: String(e ?? "") });
                 } finally {
                   setBusy(false);
+                  setPhase("idle");
                 }
               })()
             }
@@ -534,6 +538,7 @@ export default function App() {
                 }
 
                 setBusy(true);
+                setPhase("building");
                 setBottomTab("terminal");
                 try {
                   const res = (await invoke("project_build", {
@@ -551,6 +556,7 @@ export default function App() {
                   pushRun({ title: "Build (error)", output: String(e ?? "") });
                 } finally {
                   setBusy(false);
+                  setPhase("idle");
                 }
               })()
             }
@@ -598,6 +604,7 @@ export default function App() {
                 }
 
                 setBusy(true);
+                setPhase("building");
                 setBottomTab("terminal");
                 try {
                   // Always build before running (simple, reliable loop).
@@ -621,12 +628,14 @@ export default function App() {
                     pushRun({ title: "Run (error)", output: "No executable produced by build." });
                     return;
                   }
+                  setPhase("running");
                   const res = (await invoke("project_run", { root, exeRel: exe })) as RunResult;
                   pushRun({ title: `Run (${res.code === 0 ? "ok" : "exit " + res.code})`, cmd: exe, code: res.code, output: res.output || "" });
                 } catch (e: any) {
                   pushRun({ title: "Run (error)", output: String(e ?? "") });
                 } finally {
                   setBusy(false);
+                  setPhase("idle");
                 }
               })()
             }
