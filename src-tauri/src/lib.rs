@@ -22,6 +22,14 @@ struct SvlabConfig {
     defines: Vec<String>,
     #[serde(default)]
     verilator_args: Vec<String>,
+
+    // Sim controls
+    #[serde(default)]
+    max_time: u64,
+    #[serde(default)]
+    trace: bool,
+    #[serde(default)]
+    plusargs: Vec<String>,
 }
 
 impl Default for SvlabConfig {
@@ -32,6 +40,9 @@ impl Default for SvlabConfig {
             include_dirs: vec![],
             defines: vec![],
             verilator_args: vec!["--sv".to_string(), "-Wall".to_string(), "--timing".to_string()],
+            max_time: 200000,
+            trace: true,
+            plusargs: vec![],
         }
     }
 }
@@ -400,6 +411,14 @@ fn load_or_init_config(root: &Path) -> Result<SvlabConfig, String> {
         if !cfg.verilator_args.iter().any(|x| x == "--timing" || x == "--no-timing") {
             cfg.verilator_args.push("--timing".to_string());
         }
+        if cfg.max_time == 0 {
+            cfg.max_time = 200000;
+        }
+        // default trace on
+        // (bool default is false if field missing)
+        if cfg.plusargs.is_empty() {
+            cfg.plusargs = vec![];
+        }
         Ok(cfg)
     } else {
         let cfg = SvlabConfig::default();
@@ -511,6 +530,20 @@ fn project_set_top(root: String, top: String) -> Result<(), String> {
     write_config(&rootp, &cfg)
 }
 
+#[tauri::command]
+fn project_get_config(root: String) -> Result<SvlabConfig, String> {
+    let rootp = PathBuf::from(&root);
+    let _canon = rootp.canonicalize().map_err(|e| format!("Invalid root: {e}"))?;
+    load_or_init_config(&rootp)
+}
+
+#[tauri::command]
+fn project_set_config(root: String, cfg: SvlabConfig) -> Result<(), String> {
+    let rootp = PathBuf::from(&root);
+    let _canon = rootp.canonicalize().map_err(|e| format!("Invalid root: {e}"))?;
+    write_config(&rootp, &cfg)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LintResult {
     code: i32,
@@ -564,7 +597,7 @@ fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
     fs::write(path, content).map_err(|e| format!("Failed to write file: {e}"))
 }
 
-fn generate_sim_main_cpp(root: &Path, top: &str, enable_fst: bool) -> Result<PathBuf, String> {
+fn generate_sim_main_cpp(root: &Path, top: &str, enable_fst: bool, max_time: u64) -> Result<PathBuf, String> {
     let svlab = ensure_svlab_dir(root)?;
     let p = svlab.join("sim_main.cpp");
 
@@ -595,12 +628,13 @@ fn generate_sim_main_cpp(root: &Path, top: &str, enable_fst: bool) -> Result<Pat
     };
 
     let content = format!(
-        "#include <verilated.h>\n{}#include \"V{}.h\"\n\nstatic vluint64_t main_time = 0;\n\ndouble sc_time_stamp() {{ return (double)main_time; }}\n\nint main(int argc, char** argv) {{\n  Verilated::commandArgs(argc, argv);\n  V{}* top = new V{};\n{}\n  const vluint64_t max_time = 200000;\n  while (!Verilated::gotFinish() && main_time < max_time) {{\n    top->eval();\n{}    main_time++;\n    Verilated::timeInc(1);\n  }}\n{}\n  top->final();\n  delete top;\n  return 0;\n}}\n",
+        "#include <verilated.h>\n{}#include \"V{}.h\"\n\nstatic vluint64_t main_time = 0;\n\ndouble sc_time_stamp() {{ return (double)main_time; }}\n\nint main(int argc, char** argv) {{\n  Verilated::commandArgs(argc, argv);\n  V{}* top = new V{};\n{}\n  const vluint64_t max_time = {};\n  while (!Verilated::gotFinish() && main_time < max_time) {{\n    top->eval();\n{}    main_time++;\n    Verilated::timeInc(1);\n  }}\n{}\n  top->final();\n  delete top;\n  return 0;\n}}\n",
         trace_includes,
         top,
         top,
         top,
         trace_setup,
+        max_time,
         trace_dump,
         trace_close
     );
@@ -739,7 +773,7 @@ async fn project_build(
     }
 
     let _enable_fst = cfg.verilator_args.iter().any(|x| x == "--trace-fst") || cfg.verilator_args.iter().any(|x| x == "--trace");
-    let _sim_main = generate_sim_main_cpp(&rootp, top, true)?;
+    let _sim_main = generate_sim_main_cpp(&rootp, top, cfg.trace, cfg.max_time)?;
 
     // Optional clean build.
     let obj_dir = rootp.join("obj_dir");
@@ -771,7 +805,9 @@ async fn project_build(
     vcmd.arg(".svlab/sim_main.cpp");
     vcmd.arg("--top-module");
     vcmd.arg(top);
-    vcmd.arg("--trace-fst");
+    if cfg.trace {
+        vcmd.arg("--trace-fst");
+    }
 
     for d in cfg.include_dirs.iter() {
         vcmd.arg(format!("-I{}", d));
@@ -810,7 +846,9 @@ async fn project_build(
         parts.push(".svlab/sim_main.cpp".to_string());
         parts.push("--top-module".to_string());
         parts.push(top.to_string());
-        parts.push("--trace-fst".to_string());
+        if cfg.trace {
+            parts.push("--trace-fst".to_string());
+        }
         for d in cfg.include_dirs.iter() {
             parts.push(format!("-I{}", d));
         }
@@ -969,6 +1007,16 @@ async fn project_run(root: String, exe_rel: String) -> Result<RunResult, String>
     }
         let mut cmd = Command::new(&exe);
         cmd.current_dir(&rootp);
+
+        // Pass configured plusargs (and any other args) to the sim.
+        if let Ok(cfg) = load_or_init_config(&rootp) {
+            for a in cfg.plusargs.iter() {
+                let t = a.trim();
+                if t.is_empty() { continue; }
+                cmd.arg(t);
+            }
+        }
+
         let (code, out) = run_cmd_capture(cmd)?;
         Ok(RunResult { code, output: out })
     })
@@ -993,6 +1041,8 @@ pub fn run() {
             project_lint,
             project_detect_tops,
             project_set_top,
+            project_get_config,
+            project_set_config,
             project_build,
             project_run,
             project_open_waves

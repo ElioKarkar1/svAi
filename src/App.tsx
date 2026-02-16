@@ -34,6 +34,17 @@ type RunResult = { code: number; output: string };
 
 type TopDetectResult = { candidates: string[]; recommended: string; current: string };
 
+type SvlabConfig = {
+  top: string;
+  filelist: string;
+  include_dirs: string[];
+  defines: string[];
+  verilator_args: string[];
+  max_time: number;
+  trace: boolean;
+  plusargs: string[];
+};
+
 const LS_LAST_ROOT = "svai.lastRoot";
 const lsTopKey = (root: string) => `svai.top.${root}`;
 const lsExeKey = (root: string) => `svai.exe.${root}`;
@@ -118,6 +129,9 @@ export default function App() {
   const [_lastWaves, setLastWaves] = useState<string>("");
   const [topCandidates, setTopCandidates] = useState<string[]>([]);
   const [topValue, setTopValue] = useState<string>("");
+  const [cfg, setCfg] = useState<SvlabConfig | null>(null);
+  const [cfgDraft, setCfgDraft] = useState<SvlabConfig | null>(null);
+  const [cfgOpen, setCfgOpen] = useState<boolean>(false);
 
   const [cursorLine, setCursorLine] = useState<number>(1);
   const [cursorCol, setCursorCol] = useState<number>(1);
@@ -324,6 +338,15 @@ export default function App() {
         if (announce && !t.current && t.recommended) {
           pushRun({ title: "Top detect", output: `Recommended top: ${t.recommended}` });
         }
+      } catch {
+        // ignore
+      }
+
+      // Load config for editing.
+      try {
+        const c = (await invoke("project_get_config", { root: picked })) as SvlabConfig;
+        setCfg(c);
+        setCfgDraft(c);
       } catch {
         // ignore
       }
@@ -806,6 +829,18 @@ export default function App() {
                 Open Folder…
               </button>
 
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  setCfgDraft(cfg);
+                  setCfgOpen(true);
+                }}
+                disabled={busy || !root}
+              >
+                Config…
+              </button>
+
               <div className="menu__group">
                 <div className="menu__label">Top module</div>
                 <select
@@ -888,6 +923,137 @@ export default function App() {
           </details>
         </div>
       </div>
+
+      {cfgOpen && cfgDraft ? (
+        <div
+          className="ctx"
+          style={{ left: 80, top: 60, width: 520, maxWidth: "calc(100vw - 100px)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px" }}>
+            <div style={{ fontWeight: 700 }}>Project config</div>
+            <button className="btn" onClick={() => setCfgOpen(false)} disabled={busy}>
+              Close
+            </button>
+          </div>
+          <div className="ctx__sep" />
+
+          <div style={{ padding: 8, display: "grid", gap: 10 }}>
+            <label className="field">
+              <div className="field__label">Filelist</div>
+              <input
+                className="field__input"
+                value={cfgDraft.filelist}
+                onChange={(e) => setCfgDraft({ ...cfgDraft, filelist: e.target.value })}
+              />
+              <div className="field__hint">Relative path (default: files.f)</div>
+            </label>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <label className="field">
+                <div className="field__label">Max time (cycles)</div>
+                <input
+                  className="field__input"
+                  value={String(cfgDraft.max_time ?? 0)}
+                  onChange={(e) => setCfgDraft({ ...cfgDraft, max_time: Number(e.target.value || 0) })}
+                />
+              </label>
+              <label className="field">
+                <div className="field__label">Trace</div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!cfgDraft.trace}
+                    onChange={(e) => setCfgDraft({ ...cfgDraft, trace: e.target.checked })}
+                    id="traceToggle"
+                  />
+                  <label htmlFor="traceToggle">Enable FST tracing</label>
+                </div>
+              </label>
+            </div>
+
+            <label className="field">
+              <div className="field__label">Include dirs (-I)</div>
+              <textarea
+                className="field__input"
+                style={{ height: 70 }}
+                value={(cfgDraft.include_dirs || []).join("\n")}
+                onChange={(e) => setCfgDraft({ ...cfgDraft, include_dirs: e.target.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) })}
+              />
+              <div className="field__hint">One per line, relative or absolute</div>
+            </label>
+
+            <label className="field">
+              <div className="field__label">Defines (-D)</div>
+              <textarea
+                className="field__input"
+                style={{ height: 70 }}
+                value={(cfgDraft.defines || []).join("\n")}
+                onChange={(e) => setCfgDraft({ ...cfgDraft, defines: e.target.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) })}
+              />
+              <div className="field__hint">Example: FOO or FOO=1</div>
+            </label>
+
+            <label className="field">
+              <div className="field__label">Verilator args</div>
+              <textarea
+                className="field__input"
+                style={{ height: 70 }}
+                value={(cfgDraft.verilator_args || []).join("\n")}
+                onChange={(e) => setCfgDraft({ ...cfgDraft, verilator_args: e.target.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) })}
+              />
+              <div className="field__hint">One arg per line (e.g. --timing)</div>
+            </label>
+
+            <label className="field">
+              <div className="field__label">Plusargs (runtime)</div>
+              <textarea
+                className="field__input"
+                style={{ height: 70 }}
+                value={(cfgDraft.plusargs || []).join("\n")}
+                onChange={(e) => setCfgDraft({ ...cfgDraft, plusargs: e.target.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) })}
+              />
+              <div className="field__hint">One per line (e.g. +seed=123)</div>
+            </label>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                className="btn"
+                onClick={() => {
+                  setCfgDraft(cfg);
+                  setCfgOpen(false);
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn"
+                onClick={() =>
+                  void (async () => {
+                    if (!root || !cfgDraft) return;
+                    setBusy(true);
+                    try {
+                      await invoke("project_set_config", { root, cfg: cfgDraft });
+                      setCfg(cfgDraft);
+                      pushRun({ title: "Config", output: "Saved .svlab.json" });
+                      setCfgOpen(false);
+                    } catch (e: any) {
+                      pushRun({ title: "Config (error)", output: String(e ?? "") });
+                      setBottomTab("terminal");
+                    } finally {
+                      setBusy(false);
+                    }
+                  })()
+                }
+                disabled={busy || !root}
+              >
+                Save config
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="workarea">
         <aside className="activity">
