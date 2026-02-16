@@ -45,6 +45,23 @@ type RunResult = { code: number; output: string };
 
 type TopDetectResult = { candidates: string[]; recommended: string; current: string };
 
+type ProjectSetupProbe = {
+  has_config: boolean;
+  has_filelist: boolean;
+  filelist_rel: string;
+  has_rtl: boolean;
+  has_tb: boolean;
+  sv_count: number;
+};
+
+type ProjectSetupApplyResult = {
+  wrote_config: boolean;
+  wrote_filelist: boolean;
+  filelist_rel: string;
+  created_dirs: string[];
+  file_count: number;
+};
+
 type SvlabConfig = {
   top: string;
   filelist: string;
@@ -144,6 +161,14 @@ export default function App() {
   const [cfgDraft, setCfgDraft] = useState<SvlabConfig | null>(null);
   const [cfgOpen, setCfgOpen] = useState<boolean>(false);
   const [setupOpen, setSetupOpen] = useState<boolean>(false);
+
+  // Project setup wizard (separate from toolchain setup)
+  const [projectSetupOpen, setProjectSetupOpen] = useState<boolean>(false);
+  const [projectSetupProbe, setProjectSetupProbe] = useState<any>(null);
+  const [psCreateRtl, setPsCreateRtl] = useState<boolean>(true);
+  const [psCreateTb, setPsCreateTb] = useState<boolean>(true);
+  const [psWriteFilelist, setPsWriteFilelist] = useState<boolean>(true);
+  const [psOverwriteFilelist, setPsOverwriteFilelist] = useState<boolean>(false);
 
   const [cursorLine, setCursorLine] = useState<number>(1);
   const [cursorCol, setCursorCol] = useState<number>(1);
@@ -286,6 +311,70 @@ export default function App() {
     setExpanded((prev) => ({ ...defaults, ...persisted, ...prev }));
   };
 
+  const openProjectSetupWizard = async (r: string) => {
+    if (!r) return;
+    try {
+      const probe = (await invoke("project_setup_probe", { root: r })) as ProjectSetupProbe;
+      setProjectSetupProbe(probe);
+      // sensible defaults
+      setPsCreateRtl(!probe.has_rtl);
+      setPsCreateTb(!probe.has_tb);
+      setPsWriteFilelist(!probe.has_filelist);
+      setPsOverwriteFilelist(false);
+
+      // Auto-open if missing key project pieces.
+      if (!probe.has_filelist || !probe.has_rtl || !probe.has_tb) {
+        setProjectSetupOpen(true);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const applyProjectSetupWizard = async () => {
+    if (!root) return;
+    setBusy(true);
+    setBottomTab("terminal");
+    try {
+      const res = (await invoke("project_setup_apply", {
+        root,
+        createRtl: psCreateRtl,
+        createTb: psCreateTb,
+        writeFilelist: psWriteFilelist,
+        overwriteFilelist: psOverwriteFilelist,
+        setTop: topValue || null,
+      })) as ProjectSetupApplyResult;
+
+      const lines: string[] = [];
+      if (res.created_dirs?.length) lines.push(`Created: ${res.created_dirs.join(", ")}`);
+      if (res.wrote_filelist) lines.push(`Wrote ${res.filelist_rel} (${res.file_count} file(s))`);
+      if (!lines.length) lines.push("No changes.");
+      pushRun({ title: "Project setup", output: lines.join("\n") });
+
+      // Refresh state after changes
+      await refreshTree(root);
+      try {
+        const c = (await invoke("project_get_config", { root })) as SvlabConfig;
+        setCfg(c);
+        setCfgDraft(c);
+      } catch {
+        // ignore
+      }
+      try {
+        const t = (await invoke("project_detect_tops", { root })) as TopDetectResult;
+        setTopCandidates(t.candidates || []);
+      } catch {
+        // ignore
+      }
+
+      setProjectSetupOpen(false);
+    } catch (e: any) {
+      pushRun({ title: "Project setup (error)", output: String(e ?? "setup failed") });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const loadProject = async (picked: string, announce = true) => {
     if (!picked) return;
     setBusy(true);
@@ -303,6 +392,7 @@ export default function App() {
 
       await refreshTree(picked);
       await refreshToolchain();
+      await openProjectSetupWizard(picked);
       setOpenTabs([]);
       setActiveRel("");
       setSelected("");
@@ -850,6 +940,18 @@ export default function App() {
                 className="menu__item"
                 onClick={() => {
                   closeMenus();
+                  void openProjectSetupWizard(root);
+                  setProjectSetupOpen(true);
+                }}
+                disabled={busy || !root}
+              >
+                Setup…
+              </button>
+
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
                   setCfgDraft(cfg);
                   setCfgOpen(true);
                 }}
@@ -957,6 +1059,88 @@ export default function App() {
           </details>
         </div>
       </div>
+
+      {projectSetupOpen ? (
+        <div
+          className="ctx"
+          style={{ left: 80, top: 60, width: 600, maxWidth: "calc(100vw - 100px)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px" }}>
+            <div style={{ fontWeight: 700 }}>Project setup</div>
+            <button className="btn" onClick={() => setProjectSetupOpen(false)} disabled={busy}>
+              Close
+            </button>
+          </div>
+          <div className="ctx__sep" />
+          <div style={{ padding: 10, display: "grid", gap: 10 }}>
+            <div className="muted">
+              Create/repair common project structure and generate a filelist.
+            </div>
+
+            {projectSetupProbe ? (
+              <div className="menu__kv" style={{ border: "1px solid rgba(255,255,255,0.10)", borderRadius: 12, padding: 10 }}>
+                <div className="menu__k">rtl/</div>
+                <div className="menu__v">{projectSetupProbe.has_rtl ? "found" : "missing"}</div>
+                <div className="menu__k">tb/</div>
+                <div className="menu__v">{projectSetupProbe.has_tb ? "found" : "missing"}</div>
+                <div className="menu__k">filelist</div>
+                <div className="menu__v">{projectSetupProbe.has_filelist ? `found (${projectSetupProbe.filelist_rel})` : `missing (${projectSetupProbe.filelist_rel})`}</div>
+                <div className="menu__k">SV files</div>
+                <div className="menu__v">{projectSetupProbe.sv_count}</div>
+              </div>
+            ) : (
+              <div className="muted">Checking project…</div>
+            )}
+
+            <label className="check">
+              <input type="checkbox" checked={psCreateRtl} onChange={(e) => setPsCreateRtl(e.target.checked)} />
+              Create <code>rtl/</code> (recommended)
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={psCreateTb} onChange={(e) => setPsCreateTb(e.target.checked)} />
+              Create <code>tb/</code> (recommended)
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={psWriteFilelist} onChange={(e) => setPsWriteFilelist(e.target.checked)} />
+              Generate <code>{(projectSetupProbe?.filelist_rel || "files.f") as string}</code> from source files
+            </label>
+            <label className="check" style={{ opacity: psWriteFilelist ? 1 : 0.6 }}>
+              <input
+                type="checkbox"
+                checked={psOverwriteFilelist}
+                onChange={(e) => setPsOverwriteFilelist(e.target.checked)}
+                disabled={!psWriteFilelist}
+              />
+              Overwrite existing filelist
+            </label>
+
+            <div className="muted" style={{ marginTop: 4 }}>
+              Tip: pick a top module before you run. You can change it later in Project ▾.
+            </div>
+            <div className="menu__group">
+              <div className="menu__label">Top module</div>
+              <select className="menu__select" value={topValue} onChange={(e) => setTopValue(e.target.value)} disabled={busy}>
+                <option value="">(select…)</option>
+                {topCandidates.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+              <button className="btn" onClick={() => void openProjectSetupWizard(root)} disabled={busy || !root}>
+                Re-scan
+              </button>
+              <button className="btn primary" onClick={() => void applyProjectSetupWizard()} disabled={busy || !root}>
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {setupOpen ? (
         <div
