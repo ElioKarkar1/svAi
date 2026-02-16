@@ -902,11 +902,30 @@ fn project_open_waves(root: String, waves_rel: String, gtkwave_path: Option<Stri
 
     if cfg!(windows) && is_msys2_path(&gpath) {
         // Use bash -lc so MSYS2 GUI app launches with correct env.
+        // IMPORTANT: spawn (do not wait), otherwise the UI appears frozen until GTKWave exits.
         let cmdline = format!("\"{}\" \"{}\"", gpath.replace('"', "\\\""), waves_rel);
-        let (code, out) = run_msys2_bash(&rootp, &cmdline)?;
-        if code != 0 {
-            return Err(format!("Failed to launch GTKWave ({code}): {out}"));
+
+        let bash = msys2_bash_path();
+        if !PathBuf::from(&bash).exists() {
+            return Err("MSYS2 bash.exe not found at C:\\msys64\\usr\\bin\\bash.exe".to_string());
         }
+
+        let mut cmd = Command::new(&bash);
+        cmd.current_dir(&rootp);
+        cmd.arg("-lc");
+        cmd.arg(&cmdline);
+        cmd.env("CHERE_INVOKING", "1");
+        cmd.env("MSYSTEM", "UCRT64");
+        let cur_path = std::env::var("PATH").unwrap_or_default();
+        let prefix = "C:\\msys64\\usr\\bin;C:\\msys64\\ucrt64\\bin;";
+        cmd.env("PATH", format!("{}{}", prefix, cur_path));
+
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        cmd.spawn().map_err(|e| format!("Failed to launch GTKWave: {e}"))?;
         return Ok(());
     }
 
