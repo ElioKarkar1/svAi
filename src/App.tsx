@@ -121,6 +121,9 @@ export default function App() {
   const [cursorCol, setCursorCol] = useState<number>(1);
 
   const editorRef = useRef<any>(null);
+  const buildMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const projectMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const toolsMenuRef = useRef<HTMLDetailsElement | null>(null);
 
   const [ctxMenu, setCtxMenu] = useState<CtxMenu>(null);
 
@@ -160,6 +163,12 @@ export default function App() {
   const pushRun = (r: Omit<RunLog, "id" | "ts">) => {
     _setLastRun(r);
     return LAST_RUN_ID;
+  };
+
+  const closeMenus = () => {
+    if (buildMenuRef.current) buildMenuRef.current.open = false;
+    if (projectMenuRef.current) projectMenuRef.current.open = false;
+    if (toolsMenuRef.current) toolsMenuRef.current.open = false;
   };
 
   const refreshToolchain = async () => {
@@ -639,10 +648,17 @@ export default function App() {
             Run
           </button>
 
-          <details className="menu">
+          <details className="menu" ref={buildMenuRef}>
             <summary className="btn">Build ▾</summary>
             <div className="menu__panel">
-              <button className="menu__item" onClick={() => void lint()} disabled={busy || !root || !toolchain?.ok}>
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  void lint();
+                }}
+                disabled={busy || !root || !toolchain?.ok}
+              >
                 Lint
               </button>
               <button
@@ -736,10 +752,17 @@ export default function App() {
             </div>
           </details>
 
-          <details className="menu">
+          <details className="menu" ref={projectMenuRef}>
             <summary className="btn">Project ▾</summary>
             <div className="menu__panel">
-              <button className="menu__item" onClick={() => void openProject()} disabled={busy}>
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  void openProject();
+                }}
+                disabled={busy}
+              >
                 Open Folder…
               </button>
 
@@ -765,6 +788,7 @@ export default function App() {
                         await invoke("project_set_top", { root, top: nextTop });
                         try { localStorage.setItem(lsTopKey(root), nextTop); } catch {}
                         pushRun({ title: "Set Top", output: `Top module set to: ${nextTop}` });
+                        closeMenus();
                       } catch (e: any) {
                         pushRun({ title: "Set Top (error)", output: String(e ?? "") });
                       } finally {
@@ -784,16 +808,30 @@ export default function App() {
                 </select>
               </div>
 
-              <button className="menu__item" onClick={() => void saveActive()} disabled={busy || !activeTab || !activeTab.dirty}>
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  void saveActive();
+                }}
+                disabled={busy || !activeTab || !activeTab.dirty}
+              >
                 Save file
               </button>
-              <button className="menu__item" onClick={() => void saveAllDirty()} disabled={busy || !root || openTabs.filter((t) => t.dirty).length === 0}>
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  void saveAllDirty();
+                }}
+                disabled={busy || !root || openTabs.filter((t) => t.dirty).length === 0}
+              >
                 Save all
               </button>
             </div>
           </details>
 
-          <details className="menu">
+          <details className="menu" ref={toolsMenuRef}>
             <summary className={"btn pill " + (toolchain?.ok && toolchain?.make_ok ? "pill--ok" : "pill--bad")}>
               Tools ▾
             </summary>
