@@ -26,6 +26,17 @@ type ToolchainStatus = {
   gtkwave_ok?: boolean;
   gtkwave_version?: string;
   gtkwave_error?: string;
+  bash_path?: string;
+  bash_ok?: boolean;
+  bash_error?: string;
+  python_path?: string;
+  python_ok?: boolean;
+  python_version?: string;
+  python_error?: string;
+  gpp_path?: string;
+  gpp_ok?: boolean;
+  gpp_version?: string;
+  gpp_error?: string;
 };
 
 type BuildResult = { code: number; output: string; exe_path: string; waves_path: string };
@@ -132,6 +143,7 @@ export default function App() {
   const [cfg, setCfg] = useState<SvlabConfig | null>(null);
   const [cfgDraft, setCfgDraft] = useState<SvlabConfig | null>(null);
   const [cfgOpen, setCfgOpen] = useState<boolean>(false);
+  const [setupOpen, setSetupOpen] = useState<boolean>(false);
 
   const [cursorLine, setCursorLine] = useState<number>(1);
   const [cursorCol, setCursorCol] = useState<number>(1);
@@ -208,8 +220,13 @@ export default function App() {
     try {
       const s = (await invoke("toolchain_status")) as ToolchainStatus;
       setToolchain(s);
+      // If core tools are missing, open setup helper automatically.
+      if (!s?.ok || !s?.make_ok || !s?.bash_ok || !s?.python_ok || !s?.gpp_ok) {
+        setSetupOpen(true);
+      }
     } catch (e: any) {
       setToolchain({ verilator_path: "", ok: false, version: "", error: String(e ?? "toolchain check failed") });
+      setSetupOpen(true);
     }
   };
 
@@ -911,6 +928,17 @@ export default function App() {
               Tools ▾
             </summary>
             <div className="menu__panel">
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  setSetupOpen(true);
+                }}
+                disabled={busy}
+              >
+                Setup / Toolchain…
+              </button>
+              <div className="ctx__sep" />
               <div className="menu__kv">
                 <div className="menu__k">Verilator</div>
                 <div className="menu__v">{toolchain?.ok ? (toolchain?.version || "OK") : (toolchain?.error || "missing")}</div>
@@ -918,11 +946,91 @@ export default function App() {
                 <div className="menu__v">{toolchain?.make_ok ? (toolchain?.make_version || "OK") : (toolchain?.make_error || "missing")}</div>
                 <div className="menu__k">GTKWave</div>
                 <div className="menu__v">{toolchain?.gtkwave_ok ? (toolchain?.gtkwave_version || "OK") : (toolchain?.gtkwave_error || "missing")}</div>
+                <div className="menu__k">bash</div>
+                <div className="menu__v">{toolchain?.bash_ok ? (toolchain?.bash_path || "OK") : (toolchain?.bash_error || "missing")}</div>
+                <div className="menu__k">python3</div>
+                <div className="menu__v">{toolchain?.python_ok ? (toolchain?.python_version || toolchain?.python_path || "OK") : (toolchain?.python_error || "missing")}</div>
+                <div className="menu__k">g++</div>
+                <div className="menu__v">{toolchain?.gpp_ok ? (toolchain?.gpp_version || toolchain?.gpp_path || "OK") : (toolchain?.gpp_error || "missing")}</div>
               </div>
             </div>
           </details>
         </div>
       </div>
+
+      {setupOpen ? (
+        <div
+          className="ctx"
+          style={{ left: 80, top: 60, width: 600, maxWidth: "calc(100vw - 100px)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px" }}>
+            <div style={{ fontWeight: 700 }}>Toolchain setup</div>
+            <button className="btn" onClick={() => setSetupOpen(false)} disabled={busy}>
+              Close
+            </button>
+          </div>
+          <div className="ctx__sep" />
+          <div style={{ padding: 10, display: "grid", gap: 10 }}>
+            <div className="muted">
+              svAi uses MSYS2 UCRT64 for Verilator + make + g++ + python3, and GTKWave for viewing waves.
+            </div>
+
+            <div className="menu__kv" style={{ border: "1px solid rgba(255,255,255,0.10)", borderRadius: 12, padding: 10 }}>
+              <div className="menu__k">bash</div>
+              <div className="menu__v">{toolchain?.bash_ok ? (toolchain?.bash_path || "OK") : (toolchain?.bash_error || "missing")}</div>
+              <div className="menu__k">verilator</div>
+              <div className="menu__v">{toolchain?.ok ? (toolchain?.version || toolchain?.verilator_path || "OK") : (toolchain?.error || "missing")}</div>
+              <div className="menu__k">make</div>
+              <div className="menu__v">{toolchain?.make_ok ? (toolchain?.make_version || toolchain?.make_path || "OK") : (toolchain?.make_error || "missing")}</div>
+              <div className="menu__k">g++</div>
+              <div className="menu__v">{toolchain?.gpp_ok ? (toolchain?.gpp_version || toolchain?.gpp_path || "OK") : (toolchain?.gpp_error || "missing")}</div>
+              <div className="menu__k">python3</div>
+              <div className="menu__v">{toolchain?.python_ok ? (toolchain?.python_version || toolchain?.python_path || "OK") : (toolchain?.python_error || "missing")}</div>
+              <div className="menu__k">gtkwave</div>
+              <div className="menu__v">{toolchain?.gtkwave_ok ? (toolchain?.gtkwave_version || toolchain?.gtkwave_path || "OK") : (toolchain?.gtkwave_error || "missing")}</div>
+            </div>
+
+            <div className="muted" style={{ marginTop: 6 }}>
+              Install (MSYS2 UCRT64 shell):
+            </div>
+            <pre className="terminal__body" style={{ margin: 0 }}>
+{`pacman -Syu\n
+pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-make \\\n  mingw-w64-ucrt-x86_64-verilator \\\n  python \\\n  mingw-w64-ucrt-x86_64-gtkwave`}
+            </pre>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                className="btn"
+                onClick={() =>
+                  void (async () => {
+                    try {
+                      await navigator.clipboard.writeText(
+                        `pacman -Syu\n\npacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-make \\\n  mingw-w64-ucrt-x86_64-verilator \\\n  python \\\n  mingw-w64-ucrt-x86_64-gtkwave`
+                      );
+                      pushRun({ title: "Setup", output: "Copied install command to clipboard." });
+                    } catch {
+                      pushRun({ title: "Setup", output: "Copy failed (clipboard permission)." });
+                    }
+                  })()
+                }
+                disabled={busy}
+              >
+                Copy command
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  void refreshToolchain();
+                }}
+                disabled={busy}
+              >
+                Re-scan
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {cfgOpen && cfgDraft ? (
         <div

@@ -78,6 +78,31 @@ struct ToolchainStatus {
     gtkwave_version: String,
     #[serde(default)]
     gtkwave_error: String,
+
+    #[serde(default)]
+    bash_path: String,
+    #[serde(default)]
+    bash_ok: bool,
+    #[serde(default)]
+    bash_error: String,
+
+    #[serde(default)]
+    python_path: String,
+    #[serde(default)]
+    python_ok: bool,
+    #[serde(default)]
+    python_version: String,
+    #[serde(default)]
+    python_error: String,
+
+    #[serde(default)]
+    gpp_path: String,
+    #[serde(default)]
+    gpp_ok: bool,
+    #[serde(default)]
+    gpp_version: String,
+    #[serde(default)]
+    gpp_error: String,
 }
 
 fn canonicalize_lossy(p: &Path) -> Result<String, String> {
@@ -224,9 +249,73 @@ fn detect_gtkwave() -> (String, bool, String, String) {
     ("".to_string(), false, "".to_string(), "gtkwave not found".to_string())
 }
 
+fn detect_bash() -> (String, bool, String) {
+    if cfg!(windows) {
+        let p = PathBuf::from("C:\\msys64\\usr\\bin\\bash.exe");
+        if p.exists() {
+            return (p.to_string_lossy().to_string(), true, "".to_string());
+        }
+        return ("".to_string(), false, "MSYS2 bash.exe not found at C:\\msys64\\usr\\bin\\bash.exe".to_string());
+    }
+    // non-windows: assume bash exists
+    ("bash".to_string(), true, "".to_string())
+}
+
+fn detect_python3() -> (String, bool, String, String) {
+    let cands = if cfg!(windows) {
+        vec![
+            "C:\\msys64\\ucrt64\\bin\\python3.exe".to_string(),
+            "python3".to_string(),
+            "python".to_string(),
+        ]
+    } else {
+        vec!["python3".to_string(), "python".to_string()]
+    };
+
+    for cand in cands {
+        let mut cmd = Command::new(&cand);
+        cmd.arg("--version");
+        if let Ok((code, out)) = run_cmd_capture(cmd) {
+            if code == 0 {
+                let ver = out.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+                return (cand, true, ver, "".to_string());
+            }
+        }
+    }
+
+    ("".to_string(), false, "".to_string(), "python3 not found".to_string())
+}
+
+fn detect_gpp() -> (String, bool, String, String) {
+    let cands = if cfg!(windows) {
+        vec![
+            "C:\\msys64\\ucrt64\\bin\\g++.exe".to_string(),
+            "g++".to_string(),
+        ]
+    } else {
+        vec!["g++".to_string()]
+    };
+
+    for cand in cands {
+        let mut cmd = Command::new(&cand);
+        cmd.arg("--version");
+        if let Ok((code, out)) = run_cmd_capture(cmd) {
+            if code == 0 {
+                let ver = out.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+                return (cand, true, ver, "".to_string());
+            }
+        }
+    }
+
+    ("".to_string(), false, "".to_string(), "g++ not found".to_string())
+}
+
 fn detect_verilator() -> ToolchainStatus {
     let (make_path, make_ok, make_version, make_error) = detect_make();
     let (gtkwave_path, gtkwave_ok, gtkwave_version, gtkwave_error) = detect_gtkwave();
+    let (bash_path, bash_ok, bash_error) = detect_bash();
+    let (python_path, python_ok, python_version, python_error) = detect_python3();
+    let (gpp_path, gpp_ok, gpp_version, gpp_error) = detect_gpp();
 
     for cand in verilator_candidates() {
         let path = cand.clone();
@@ -248,6 +337,17 @@ fn detect_verilator() -> ToolchainStatus {
                     gtkwave_ok,
                     gtkwave_version,
                     gtkwave_error,
+                    bash_path,
+                    bash_ok,
+                    bash_error,
+                    python_path,
+                    python_ok,
+                    python_version,
+                    python_error,
+                    gpp_path,
+                    gpp_ok,
+                    gpp_version,
+                    gpp_error,
                 };
             }
         }
@@ -266,6 +366,17 @@ fn detect_verilator() -> ToolchainStatus {
         gtkwave_ok,
         gtkwave_version,
         gtkwave_error,
+        bash_path,
+        bash_ok,
+        bash_error,
+        python_path,
+        python_ok,
+        python_version,
+        python_error,
+        gpp_path,
+        gpp_ok,
+        gpp_version,
+        gpp_error,
     }
 }
 
