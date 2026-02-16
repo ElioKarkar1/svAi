@@ -1,25 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="g" x1="64" y1="64" x2="448" y2="448" gradientUnits="userSpaceOnUse">
+    <linearGradient id="g" x1="48" y1="96" x2="464" y2="416" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#4DD6FF"/>
       <stop offset="1" stop-color="#B86BFF"/>
     </linearGradient>
-    <!-- very subtle glow so the letters stay crisp at 16–32px -->
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="1.0" result="b"/>
-      <feMerge>
-        <feMergeNode in="b"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
   </defs>
 
-  <!-- full-bleed background (less padding = looks bigger on taskbar) -->
-  <rect x="16" y="16" width="480" height="480" rx="120" fill="#0B0F14"/>
+  <!-- full-bleed background -->
+  <rect x="0" y="0" width="512" height="512" rx="128" fill="#0B0F14"/>
 
-  <!-- no inner frame; just big letters -->
-  <g fill="url(#g)" filter="url(#glow)">
-    <text x="256" y="390" text-anchor="middle" font-size="380" font-weight="950" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">SV</text>
-  </g>
+  <!-- border/frame (kept, but larger so the icon reads bigger) -->
+  <rect x="72" y="72" width="368" height="368" rx="72" fill="none" stroke="url(#g)" stroke-width="28" stroke-linejoin="round"/>
+
+  <!-- big, centered letters -->
+  <text x="256" y="340" text-anchor="middle"
+        font-size="240" font-weight="900" letter-spacing="-10"
+        font-family="Arial Black, Segoe UI Black, Segoe UI, Arial, sans-serif"
+        fill="url(#g)">SV</text>
 </svg>
