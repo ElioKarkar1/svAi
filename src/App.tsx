@@ -413,20 +413,23 @@ export default function App() {
     }, 30);
   };
 
+  // Initial toolchain check + restore last project ONCE on startup.
   useEffect(() => {
     void refreshToolchain();
 
-    // Restore last project on startup.
     try {
       const last = localStorage.getItem(LS_LAST_ROOT) || "";
       if (last.trim()) {
-        // Best-effort; if it fails user can still Open Folder.
         void loadProject(last, false);
       }
     } catch {
       // ignore
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // Global key handlers (depends on active tab/root for Save).
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
