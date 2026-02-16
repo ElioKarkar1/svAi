@@ -1039,19 +1039,15 @@ fn project_new_create(
     // Starter RTL
     let rtl_rel = format!("rtl/{}.sv", safe_top);
     let rtl_path = rootp.join(&rtl_rel);
-    let rtl_text = format!(
-        "module {top} (\n  input  logic clk,\n  input  logic rst_n,\n  input  logic a,\n  input  logic b,\n  output logic y\n);\n\n  // TODO: implement\n  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n) y <= 1'b0;\n    else        y <= a ^ b;\n  end\n\nendmodule\n",
-        top = safe_top
-    );
+    let rtl_text = format!("module {top}();\n\nendmodule\n", top = safe_top);
     fs::write(&rtl_path, rtl_text).map_err(|e| format!("Failed to write RTL: {e}"))?;
 
     // Starter TB
     let tb_rel = format!("tb/{}.sv", tb_top);
     let tb_path = rootp.join(&tb_rel);
     let tb_text = format!(
-        "`timescale 1ns/1ps\n\nmodule {tb}();\n  logic clk = 0;\n  logic rst_n = 0;\n\n  logic a;\n  logic b;\n  logic y;\n\n  // DUT\n  {top} dut (\n    .clk(clk),\n    .rst_n(rst_n),\n    .a(a),\n    .b(b),\n    .y(y)\n  );\n\n  // clock\n  always #5 clk = ~clk;\n\n  initial begin\n    a = 0;\n    b = 0;\n    rst_n = 0;\n    repeat (2) @(posedge clk);\n    rst_n = 1;\n\n    // smoke\n    @(posedge clk); a <= 1; b <= 0;\n    @(posedge clk); a <= 1; b <= 1;\n    @(posedge clk); a <= 0; b <= 1;\n\n    repeat (5) @(posedge clk);\n    $finish;\n  end\nendmodule\n",
-        tb = tb_top,
-        top = safe_top
+        "`timescale 1ns/1ps\n\nmodule {tb}();\n  // TODO: instantiate DUT + write stimulus\n\n  initial begin\n    $display(\"TODO: write test\");\n    $finish;\n  end\nendmodule\n",
+        tb = tb_top
     );
     fs::write(&tb_path, tb_text).map_err(|e| format!("Failed to write TB: {e}"))?;
 
