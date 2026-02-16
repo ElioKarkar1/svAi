@@ -62,6 +62,15 @@ type ProjectSetupApplyResult = {
   file_count: number;
 };
 
+type ProjectNewResult = {
+  root: string;
+  created: boolean;
+  top: string;
+  filelist: string;
+  tb: string;
+  rtl: string;
+};
+
 type SvlabConfig = {
   top: string;
   filelist: string;
@@ -165,6 +174,11 @@ export default function App() {
   // Project setup wizard (separate from toolchain setup)
   const [projectSetupOpen, setProjectSetupOpen] = useState<boolean>(false);
   const [projectSetupProbe, setProjectSetupProbe] = useState<any>(null);
+
+  const [newProjectOpen, setNewProjectOpen] = useState<boolean>(false);
+  const [newProjectParent, setNewProjectParent] = useState<string>("");
+  const [newProjectName, setNewProjectName] = useState<string>("svai-project");
+  const [newProjectTop, setNewProjectTop] = useState<string>("top");
   const [psCreateRtl, setPsCreateRtl] = useState<boolean>(true);
   const [psCreateTb, setPsCreateTb] = useState<boolean>(true);
   const [psWriteFilelist, setPsWriteFilelist] = useState<boolean>(true);
@@ -475,6 +489,53 @@ export default function App() {
     } catch (e: any) {
       setBottomTab("terminal");
       pushRun({ title: "Open Folder (error)", output: `Open Project failed: ${String(e ?? "")}` });
+    }
+  };
+
+  const openNewProjectModal = async () => {
+    closeMenus();
+    // Default parent dir: last root's parent if available.
+    if (!newProjectParent && root) {
+      const parts = root.replace(/\\/g, "/").split("/");
+      parts.pop();
+      const parentGuess = parts.join("/");
+      if (parentGuess) setNewProjectParent(parentGuess);
+    }
+    setNewProjectOpen(true);
+  };
+
+  const chooseNewProjectParent = async () => {
+    try {
+      const sel = await open({ directory: true, multiple: false, title: "Choose parent folder" });
+      const picked = typeof sel === "string" ? sel : Array.isArray(sel) ? sel[0] : null;
+      if (!picked) return;
+      setNewProjectParent(picked);
+    } catch {
+      // ignore
+    }
+  };
+
+  const createNewProject = async () => {
+    setBusy(true);
+    setBottomTab("terminal");
+    try {
+      const res = (await invoke("project_new_create", {
+        parentDir: newProjectParent,
+        name: newProjectName,
+        top: newProjectTop,
+      })) as ProjectNewResult;
+
+      pushRun({
+        title: "New Project",
+        output: `Created: ${res.root}\nTop: ${res.top}\nFilelist: ${res.filelist}\nRTL: ${res.rtl}\nTB: ${res.tb}`,
+      });
+
+      setNewProjectOpen(false);
+      await loadProject(res.root, true);
+    } catch (e: any) {
+      pushRun({ title: "New Project (error)", output: String(e ?? "") });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -939,6 +1000,16 @@ export default function App() {
               <button
                 className="menu__item"
                 onClick={() => {
+                  void openNewProjectModal();
+                }}
+                disabled={busy}
+              >
+                New Project…
+              </button>
+
+              <button
+                className="menu__item"
+                onClick={() => {
                   closeMenus();
                   void openProjectSetupWizard(root);
                   setProjectSetupOpen(true);
@@ -1136,6 +1207,58 @@ export default function App() {
               </button>
               <button className="btn primary" onClick={() => void applyProjectSetupWizard()} disabled={busy || !root}>
                 Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {newProjectOpen ? (
+        <div
+          className="ctx"
+          style={{ left: 80, top: 60, width: 600, maxWidth: "calc(100vw - 100px)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px" }}>
+            <div style={{ fontWeight: 700 }}>New project</div>
+            <button className="btn" onClick={() => setNewProjectOpen(false)} disabled={busy}>
+              Close
+            </button>
+          </div>
+          <div className="ctx__sep" />
+          <div style={{ padding: 10, display: "grid", gap: 10 }}>
+            <div className="muted">Creates a new SV project folder with rtl/, tb/, files.f, and .svlab.json.</div>
+
+            <div className="menu__group">
+              <div className="menu__label">Location (parent folder)</div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <input
+                  className="menu__select"
+                  value={newProjectParent}
+                  onChange={(e) => setNewProjectParent(e.target.value)}
+                  placeholder="Choose a parent folder…"
+                />
+                <button className="btn" onClick={() => void chooseNewProjectParent()} disabled={busy}>
+                  Browse…
+                </button>
+              </div>
+            </div>
+
+            <div className="menu__group">
+              <div className="menu__label">Project name</div>
+              <input className="menu__select" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} />
+              <div className="field__hint">Folder name (spaces will be converted to dashes)</div>
+            </div>
+
+            <div className="menu__group">
+              <div className="menu__label">Top module name</div>
+              <input className="menu__select" value={newProjectTop} onChange={(e) => setNewProjectTop(e.target.value)} />
+              <div className="field__hint">Will create: rtl/&lt;top&gt;.sv and tb/tb_&lt;top&gt;.sv</div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button className="btn primary" onClick={() => void createNewProject()} disabled={busy || !newProjectParent.trim() || !newProjectName.trim() || !newProjectTop.trim()}>
+                Create
               </button>
             </div>
           </div>
