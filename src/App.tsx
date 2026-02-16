@@ -531,244 +531,8 @@ export default function App() {
           <div className="titlebar__crumbs">{crumbs || ""}</div>
         </div>
         <div className="titlebar__right">
-          <button className="btn" onClick={() => void lint()} disabled={busy || !root || !toolchain?.ok}>
-            Lint
-          </button>
+          <button className="btn btn--primary" onClick={() => void (document.activeElement as any)?.blur?.()} style={{ display: "none" }} />
 
-          <select
-            className="btn"
-            value={topValue}
-            onChange={(e) => setTopValue(e.target.value)}
-            disabled={busy || !root || topCandidates.length === 0}
-            title="Top module"
-          >
-            <option value="">(top module)</option>
-            {topCandidates.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <button
-            className="btn"
-            onClick={() =>
-              void (async () => {
-                if (!root) return;
-                const top = (topValue || "").trim();
-                if (!top) {
-                  pushRun({ title: "Set Top (error)", output: "Choose a top module first." });
-                  setBottomTab("terminal");
-                  return;
-                }
-                setBusy(true);
-                try {
-                  await invoke("project_set_top", { root, top });
-                  try {
-                    localStorage.setItem(lsTopKey(root), top);
-                  } catch {
-                    // ignore
-                  }
-                  pushRun({ title: "Set Top", output: `Top module set to: ${top}` });
-                } catch (e: any) {
-                  pushRun({ title: "Set Top (error)", output: String(e ?? "") });
-                } finally {
-                  setBusy(false);
-                  setPhase("idle");
-                }
-              })()
-            }
-            disabled={busy || !root || !(topValue || "").trim()}
-          >
-            Set Top
-          </button>
-          <button
-            className="btn"
-            onClick={() =>
-              void (async () => {
-                if (!root) return;
-
-                const dirtyCount = openTabs.filter((t) => t.dirty).length;
-                if (dirtyCount > 0) {
-                  const ok = window.confirm(
-                    `You have ${dirtyCount} unsaved file(s).\n\nSave + Build now?`
-                  );
-                  if (!ok) return;
-                  await saveAllDirty();
-                }
-
-                setBusy(true);
-                setPhase("building");
-                setBottomTab("terminal");
-                try {
-                  const res = (await invoke("project_build", {
-                    root,
-                    verilatorPath: toolchain?.verilator_path || "",
-                    makePath: toolchain?.make_path || "",
-                    clean: false,
-                  })) as BuildResult;
-                  pushRun({ title: `Build (${res.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: res.code, output: res.output || "" });
-                  const ps = parseProblemsFromVerilator(res.output || "");
-                  setProblems(ps);
-                  if (ps.length) setBottomTab("problems");
-                  setLastBuiltExe(res.exe_path || "");
-                  setLastWaves(res.waves_path || "");
-                  try {
-                    if (res.exe_path) localStorage.setItem(lsExeKey(root), res.exe_path);
-                    if (res.waves_path) localStorage.setItem(lsWavesKey(root), res.waves_path);
-                  } catch {
-                    // ignore
-                  }
-                } catch (e: any) {
-                  pushRun({ title: "Build (error)", output: String(e ?? "") });
-                } finally {
-                  setBusy(false);
-                  setPhase("idle");
-                }
-              })()
-            }
-            disabled={busy || !root || !toolchain?.ok || !toolchain?.make_ok}
-          >
-            Build
-          </button>
-
-          <button
-            className="btn"
-            onClick={() =>
-              void (async () => {
-                if (!root) return;
-                const ok = window.confirm("Clean build will delete obj_dir and rebuild from scratch. Continue?");
-                if (!ok) return;
-
-                const dirtyCount = openTabs.filter((t) => t.dirty).length;
-                if (dirtyCount > 0) {
-                  const ok2 = window.confirm(
-                    `You have ${dirtyCount} unsaved file(s).\n\nSave + Clean Build now?`
-                  );
-                  if (!ok2) return;
-                  await saveAllDirty();
-                }
-
-                setBusy(true);
-                setPhase("building");
-                setBottomTab("terminal");
-                try {
-                  const res = (await invoke("project_build", {
-                    root,
-                    verilatorPath: toolchain?.verilator_path || "",
-                    makePath: toolchain?.make_path || "",
-                    clean: true,
-                  })) as BuildResult;
-                  pushRun({ title: `Clean Build (${res.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make (clean)", code: res.code, output: res.output || "" });
-                  const ps = parseProblemsFromVerilator(res.output || "");
-                  setProblems(ps);
-                  if (ps.length) setBottomTab("problems");
-                  setLastBuiltExe(res.exe_path || "");
-                  setLastWaves(res.waves_path || "");
-                  try {
-                    if (res.exe_path) localStorage.setItem(lsExeKey(root), res.exe_path);
-                    if (res.waves_path) localStorage.setItem(lsWavesKey(root), res.waves_path);
-                  } catch {
-                    // ignore
-                  }
-                } catch (e: any) {
-                  pushRun({ title: "Clean Build (error)", output: String(e ?? "") });
-                } finally {
-                  setBusy(false);
-                  setPhase("idle");
-                }
-              })()
-            }
-            disabled={busy || !root || !toolchain?.ok || !toolchain?.make_ok}
-            title="Delete obj_dir then rebuild"
-          >
-            Clean Build
-          </button>
-          <button
-            className="btn"
-            onClick={() =>
-              void (async () => {
-                if (!root) return;
-
-                const dirtyCount = openTabs.filter((t) => t.dirty).length;
-                if (dirtyCount > 0) {
-                  const ok = window.confirm(
-                    `You have ${dirtyCount} unsaved file(s).\n\nSave + Build + Run now?`
-                  );
-                  if (!ok) return;
-                  await saveAllDirty();
-                }
-
-                // Ensure we have a top set (safe prompt).
-                let ensuredTop = (topValue || "").trim();
-                try {
-                  if (!ensuredTop) {
-                    const t = (await invoke("project_detect_tops", { root })) as TopDetectResult;
-                    if (t?.candidates?.length) setTopCandidates(t.candidates);
-                    const rec = (t?.current || t?.recommended || "").trim();
-                    if (rec) {
-                      const ok = window.confirm(`Top module isn't set.\n\nSet top to: ${rec}?`);
-                      if (!ok) return;
-                      await invoke("project_set_top", { root, top: rec });
-                      ensuredTop = rec;
-                      setTopValue(rec);
-                      pushRun({ title: "Set Top", output: `Top module set to: ${rec}` });
-                    } else {
-                      pushRun({ title: "Run (error)", output: "Couldn't detect a top module. Use the top dropdown + Set Top." });
-                      return;
-                    }
-                  }
-                } catch (e: any) {
-                  pushRun({ title: "Run (error)", output: `Top detect failed: ${String(e ?? "")}` });
-                  return;
-                }
-
-                setBusy(true);
-                setPhase("building");
-                setBottomTab("terminal");
-                try {
-                  // Always build before running (simple, reliable loop).
-                  const b = (await invoke("project_build", {
-                    root,
-                    verilatorPath: toolchain?.verilator_path || "",
-                    makePath: toolchain?.make_path || "",
-                    clean: false,
-                  })) as BuildResult;
-                  pushRun({ title: `Build (${b.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: b.code, output: b.output || "" });
-                  setLastBuiltExe(b.exe_path || "");
-                  setLastWaves(b.waves_path || "");
-                  try {
-                    if (b.exe_path) localStorage.setItem(lsExeKey(root), b.exe_path);
-                    if (b.waves_path) localStorage.setItem(lsWavesKey(root), b.waves_path);
-                  } catch {
-                    // ignore
-                  }
-                  const ps = parseProblemsFromVerilator(b.output || "");
-                  setProblems(ps);
-                  if (ps.length || b.code !== 0) {
-                    setBottomTab("problems");
-                    return;
-                  }
-
-                  const exe = b.exe_path || lastBuiltExe;
-                  if (!exe) {
-                    pushRun({ title: "Run (error)", output: "No executable produced by build." });
-                    return;
-                  }
-                  setPhase("running");
-                  const res = (await invoke("project_run", { root, exeRel: exe })) as RunResult;
-                  pushRun({ title: `Run (${res.code === 0 ? "ok" : "exit " + res.code})`, cmd: exe, code: res.code, output: res.output || "" });
-                } catch (e: any) {
-                  pushRun({ title: "Run (error)", output: String(e ?? "") });
-                } finally {
-                  setBusy(false);
-                  setPhase("idle");
-                }
-              })()
-            }
-            disabled={busy || !root}
-          >
-            Run
-          </button>
           <button
             className="btn"
             onClick={() =>
@@ -787,21 +551,263 @@ export default function App() {
               })()
             }
             disabled={busy || !root || !_lastWaves || !toolchain?.gtkwave_ok}
+            title="Open last waves"
           >
-            Open Waves
+            Waves
           </button>
-          <button className="btn" onClick={() => void saveActive()} disabled={busy || !activeTab || !activeTab.dirty}>
-            Save
+
+          <button
+            className="btn"
+            onClick={() =>
+              void (async () => {
+                if (!root) return;
+
+                const dirtyCount = openTabs.filter((t) => t.dirty).length;
+                if (dirtyCount > 0) {
+                  const ok = window.confirm(`You have ${dirtyCount} unsaved file(s).\n\nSave + Build + Run now?`);
+                  if (!ok) return;
+                  await saveAllDirty();
+                }
+
+                // Ensure we have a top set (safe prompt).
+                let ensuredTop = (topValue || "").trim();
+                try {
+                  if (!ensuredTop) {
+                    const t = (await invoke("project_detect_tops", { root })) as TopDetectResult;
+                    if (t?.candidates?.length) setTopCandidates(t.candidates);
+                    const rec = (t?.current || t?.recommended || "").trim();
+                    if (rec) {
+                      const ok = window.confirm(`Top module isn't set.\n\nSet top to: ${rec}?`);
+                      if (!ok) return;
+                      await invoke("project_set_top", { root, top: rec });
+                      try { localStorage.setItem(lsTopKey(root), rec); } catch {}
+                      ensuredTop = rec;
+                      setTopValue(rec);
+                      pushRun({ title: "Set Top", output: `Top module set to: ${rec}` });
+                    } else {
+                      pushRun({ title: "Run (error)", output: "Couldn't detect a top module. Use Project ▾ → Top." });
+                      return;
+                    }
+                  }
+                } catch (e: any) {
+                  pushRun({ title: "Run (error)", output: `Top detect failed: ${String(e ?? "")}` });
+                  return;
+                }
+
+                setBusy(true);
+                setPhase("building");
+                setBottomTab("terminal");
+                try {
+                  const b = (await invoke("project_build", {
+                    root,
+                    verilatorPath: toolchain?.verilator_path || "",
+                    makePath: toolchain?.make_path || "",
+                    clean: false,
+                  })) as BuildResult;
+                  pushRun({ title: `Build (${b.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: b.code, output: b.output || "" });
+                  setLastBuiltExe(b.exe_path || "");
+                  setLastWaves(b.waves_path || "");
+                  try {
+                    if (b.exe_path) localStorage.setItem(lsExeKey(root), b.exe_path);
+                    if (b.waves_path) localStorage.setItem(lsWavesKey(root), b.waves_path);
+                  } catch {}
+                  const ps = parseProblemsFromVerilator(b.output || "");
+                  setProblems(ps);
+                  if (ps.length || b.code !== 0) {
+                    setBottomTab("problems");
+                    return;
+                  }
+                  const exe = b.exe_path || lastBuiltExe;
+                  if (!exe) {
+                    pushRun({ title: "Run (error)", output: "No executable produced by build." });
+                    return;
+                  }
+                  setPhase("running");
+                  const res = (await invoke("project_run", { root, exeRel: exe })) as RunResult;
+                  pushRun({ title: `Run (${res.code === 0 ? "ok" : "exit " + res.code})`, cmd: exe, code: res.code, output: res.output || "" });
+                } catch (e: any) {
+                  pushRun({ title: "Run (error)", output: String(e ?? "") });
+                } finally {
+                  setBusy(false);
+                  setPhase("idle");
+                }
+              })()
+            }
+            disabled={busy || !root}
+            title="Build then run"
+          >
+            Run
           </button>
-          <span className={"pill " + (toolchain?.ok ? "pill--ok" : "pill--bad")}>
-            {toolchain?.ok ? `Verilator OK` : "Verilator missing"}
-          </span>
-          <span className={"pill " + (toolchain?.make_ok ? "pill--ok" : "pill--bad")}>
-            {toolchain?.make_ok ? `make OK` : "make missing"}
-          </span>
-          <span className={"pill " + (toolchain?.gtkwave_ok ? "pill--ok" : "pill--bad")}>
-            {toolchain?.gtkwave_ok ? `GTKWave OK` : "GTKWave missing"}
-          </span>
+
+          <details className="menu">
+            <summary className="btn">Build ▾</summary>
+            <div className="menu__panel">
+              <button className="menu__item" onClick={() => void lint()} disabled={busy || !root || !toolchain?.ok}>
+                Lint
+              </button>
+              <button
+                className="menu__item"
+                onClick={() =>
+                  void (async () => {
+                    if (!root) return;
+                    const dirtyCount = openTabs.filter((t) => t.dirty).length;
+                    if (dirtyCount > 0) {
+                      const ok = window.confirm(`You have ${dirtyCount} unsaved file(s).\n\nSave + Build now?`);
+                      if (!ok) return;
+                      await saveAllDirty();
+                    }
+                    setBusy(true);
+                    setPhase("building");
+                    setBottomTab("terminal");
+                    try {
+                      const res = (await invoke("project_build", {
+                        root,
+                        verilatorPath: toolchain?.verilator_path || "",
+                        makePath: toolchain?.make_path || "",
+                        clean: false,
+                      })) as BuildResult;
+                      pushRun({ title: `Build (${res.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: res.code, output: res.output || "" });
+                      const ps = parseProblemsFromVerilator(res.output || "");
+                      setProblems(ps);
+                      if (ps.length) setBottomTab("problems");
+                      setLastBuiltExe(res.exe_path || "");
+                      setLastWaves(res.waves_path || "");
+                      try {
+                        if (res.exe_path) localStorage.setItem(lsExeKey(root), res.exe_path);
+                        if (res.waves_path) localStorage.setItem(lsWavesKey(root), res.waves_path);
+                      } catch {}
+                    } catch (e: any) {
+                      pushRun({ title: "Build (error)", output: String(e ?? "") });
+                    } finally {
+                      setBusy(false);
+                      setPhase("idle");
+                    }
+                  })()
+                }
+                disabled={busy || !root || !toolchain?.ok || !toolchain?.make_ok}
+              >
+                Build
+              </button>
+              <button
+                className="menu__item"
+                onClick={() =>
+                  void (async () => {
+                    if (!root) return;
+                    const ok = window.confirm("Clean build will delete obj_dir and rebuild from scratch. Continue?");
+                    if (!ok) return;
+                    const dirtyCount = openTabs.filter((t) => t.dirty).length;
+                    if (dirtyCount > 0) {
+                      const ok2 = window.confirm(`You have ${dirtyCount} unsaved file(s).\n\nSave + Clean Build now?`);
+                      if (!ok2) return;
+                      await saveAllDirty();
+                    }
+                    setBusy(true);
+                    setPhase("building");
+                    setBottomTab("terminal");
+                    try {
+                      const res = (await invoke("project_build", {
+                        root,
+                        verilatorPath: toolchain?.verilator_path || "",
+                        makePath: toolchain?.make_path || "",
+                        clean: true,
+                      })) as BuildResult;
+                      pushRun({ title: `Clean Build (${res.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make (clean)", code: res.code, output: res.output || "" });
+                      const ps = parseProblemsFromVerilator(res.output || "");
+                      setProblems(ps);
+                      if (ps.length) setBottomTab("problems");
+                      setLastBuiltExe(res.exe_path || "");
+                      setLastWaves(res.waves_path || "");
+                      try {
+                        if (res.exe_path) localStorage.setItem(lsExeKey(root), res.exe_path);
+                        if (res.waves_path) localStorage.setItem(lsWavesKey(root), res.waves_path);
+                      } catch {}
+                    } catch (e: any) {
+                      pushRun({ title: "Clean Build (error)", output: String(e ?? "") });
+                    } finally {
+                      setBusy(false);
+                      setPhase("idle");
+                    }
+                  })()
+                }
+                disabled={busy || !root || !toolchain?.ok || !toolchain?.make_ok}
+              >
+                Clean Build
+              </button>
+            </div>
+          </details>
+
+          <details className="menu">
+            <summary className="btn">Project ▾</summary>
+            <div className="menu__panel">
+              <button className="menu__item" onClick={() => void openProject()} disabled={busy}>
+                Open Folder…
+              </button>
+
+              <div className="menu__group">
+                <div className="menu__label">Top module</div>
+                <select
+                  className="menu__select"
+                  value={topValue}
+                  onChange={(e) =>
+                    void (async () => {
+                      if (!root) return;
+                      const nextTop = e.target.value;
+                      const dirtyCount = openTabs.filter((t) => t.dirty).length;
+                      if (dirtyCount > 0) {
+                        const ok = window.confirm(
+                          `You have ${dirtyCount} unsaved file(s).\n\nChange top to ${nextTop}?`
+                        );
+                        if (!ok) return;
+                      }
+                      setTopValue(nextTop);
+                      setBusy(true);
+                      try {
+                        await invoke("project_set_top", { root, top: nextTop });
+                        try { localStorage.setItem(lsTopKey(root), nextTop); } catch {}
+                        pushRun({ title: "Set Top", output: `Top module set to: ${nextTop}` });
+                      } catch (e: any) {
+                        pushRun({ title: "Set Top (error)", output: String(e ?? "") });
+                      } finally {
+                        setBusy(false);
+                        setPhase("idle");
+                      }
+                    })()
+                  }
+                  disabled={busy || !root || topCandidates.length === 0}
+                >
+                  <option value="">(select…)</option>
+                  {topCandidates.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button className="menu__item" onClick={() => void saveActive()} disabled={busy || !activeTab || !activeTab.dirty}>
+                Save file
+              </button>
+              <button className="menu__item" onClick={() => void saveAllDirty()} disabled={busy || !root || openTabs.filter((t) => t.dirty).length === 0}>
+                Save all
+              </button>
+            </div>
+          </details>
+
+          <details className="menu">
+            <summary className={"btn pill " + (toolchain?.ok && toolchain?.make_ok ? "pill--ok" : "pill--bad")}>
+              Tools ▾
+            </summary>
+            <div className="menu__panel">
+              <div className="menu__kv">
+                <div className="menu__k">Verilator</div>
+                <div className="menu__v">{toolchain?.ok ? (toolchain?.version || "OK") : (toolchain?.error || "missing")}</div>
+                <div className="menu__k">make</div>
+                <div className="menu__v">{toolchain?.make_ok ? (toolchain?.make_version || "OK") : (toolchain?.make_error || "missing")}</div>
+                <div className="menu__k">GTKWave</div>
+                <div className="menu__v">{toolchain?.gtkwave_ok ? (toolchain?.gtkwave_version || "OK") : (toolchain?.gtkwave_error || "missing")}</div>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
