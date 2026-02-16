@@ -604,6 +604,7 @@ export default function App() {
                     root,
                     verilatorPath: toolchain?.verilator_path || "",
                     makePath: toolchain?.make_path || "",
+                    clean: false,
                   })) as BuildResult;
                   pushRun({ title: `Build (${res.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: res.code, output: res.output || "" });
                   const ps = parseProblemsFromVerilator(res.output || "");
@@ -628,6 +629,59 @@ export default function App() {
             disabled={busy || !root || !toolchain?.ok || !toolchain?.make_ok}
           >
             Build
+          </button>
+
+          <button
+            className="btn"
+            onClick={() =>
+              void (async () => {
+                if (!root) return;
+                const ok = window.confirm("Clean build will delete obj_dir and rebuild from scratch. Continue?");
+                if (!ok) return;
+
+                const dirtyCount = openTabs.filter((t) => t.dirty).length;
+                if (dirtyCount > 0) {
+                  const ok2 = window.confirm(
+                    `You have ${dirtyCount} unsaved file(s).\n\nSave + Clean Build now?`
+                  );
+                  if (!ok2) return;
+                  await saveAllDirty();
+                }
+
+                setBusy(true);
+                setPhase("building");
+                setBottomTab("terminal");
+                try {
+                  const res = (await invoke("project_build", {
+                    root,
+                    verilatorPath: toolchain?.verilator_path || "",
+                    makePath: toolchain?.make_path || "",
+                    clean: true,
+                  })) as BuildResult;
+                  pushRun({ title: `Clean Build (${res.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make (clean)", code: res.code, output: res.output || "" });
+                  const ps = parseProblemsFromVerilator(res.output || "");
+                  setProblems(ps);
+                  if (ps.length) setBottomTab("problems");
+                  setLastBuiltExe(res.exe_path || "");
+                  setLastWaves(res.waves_path || "");
+                  try {
+                    if (res.exe_path) localStorage.setItem(lsExeKey(root), res.exe_path);
+                    if (res.waves_path) localStorage.setItem(lsWavesKey(root), res.waves_path);
+                  } catch {
+                    // ignore
+                  }
+                } catch (e: any) {
+                  pushRun({ title: "Clean Build (error)", output: String(e ?? "") });
+                } finally {
+                  setBusy(false);
+                  setPhase("idle");
+                }
+              })()
+            }
+            disabled={busy || !root || !toolchain?.ok || !toolchain?.make_ok}
+            title="Delete obj_dir then rebuild"
+          >
+            Clean Build
           </button>
           <button
             className="btn"
@@ -677,6 +731,7 @@ export default function App() {
                     root,
                     verilatorPath: toolchain?.verilator_path || "",
                     makePath: toolchain?.make_path || "",
+                    clean: false,
                   })) as BuildResult;
                   pushRun({ title: `Build (${b.code === 0 ? "ok" : "issues"})`, cmd: "verilator -cc ... && make", code: b.code, output: b.output || "" });
                   setLastBuiltExe(b.exe_path || "");
