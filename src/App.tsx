@@ -477,6 +477,65 @@ export default function App() {
     return [...parts, next].filter(Boolean).join("/");
   };
 
+  const guessCreatePathFromSv = (sv: string): string => {
+    const m = (sv || "").match(/\bmodule\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
+    const name = (m?.[1] || "").trim();
+    return name ? `rtl/${name}.sv` : "rtl/new.sv";
+  };
+
+  const createFileFromAssistant = async (assistantIndex: number) => {
+    if (!root) return;
+    const assistantText = aiMessages[assistantIndex]?.content || "";
+    const code = tryExtractCodeBlock(assistantText);
+    if (!code) {
+      pushRun({ title: "AI", output: "No code block found to create a file from." });
+      return;
+    }
+    if (looksLikeDiff(code)) {
+      pushRun({ title: "AI", output: "That message looks like a diff. Use Apply instead." });
+      return;
+    }
+
+    const def = guessCreatePathFromSv(code);
+    const rel = (window.prompt("Create file at (relative path)", def) || "").trim().replace(/\\/g, "/");
+    if (!rel) return;
+    if (isBlockedRelPath(rel)) {
+      pushRun({ title: "AI (error)", output: "Refusing to write to that path." });
+      return;
+    }
+
+    setBusy(true);
+    setBottomTab("terminal");
+    try {
+      const exists = (await invoke("project_exists", { root, relPath: rel })) as boolean;
+      let finalPath = rel;
+      if (exists) {
+        const okOverwrite = window.confirm(`File already exists: ${rel}\n\nOK = overwrite\nCancel = create copy with suffix`);
+        if (!okOverwrite) {
+          let k = 2;
+          while (k < 50) {
+            const cand = nextSuffixPath(rel, k);
+            const candExists = (await invoke("project_exists", { root, relPath: cand })) as boolean;
+            if (!candExists) {
+              finalPath = cand;
+              break;
+            }
+            k += 1;
+          }
+        }
+      }
+
+      await invoke("project_write_file", { root, relPath: finalPath, content: code });
+      pushRun({ title: "AI", output: `Created: ${finalPath}` });
+      await refreshTree(root);
+      await openFile(finalPath);
+    } catch (e: any) {
+      pushRun({ title: "AI (error)", output: String(e?.message ?? e ?? "") });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const applyAssistantAuto = async (assistantIndex: number) => {
     if (!root) return;
 
@@ -2323,6 +2382,15 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                   <div key={idx} className={"aiMsg aiMsg--" + m.role}>
                     <div className="aiMsg__role">{m.role}</div>
                     <div className="aiMsg__content">{m.content}</div>
+
+                    {m.role === "assistant" && tryExtractCodeBlock(m.content) && !looksLikeDiff(tryExtractCodeBlock(m.content) || "") ? (
+                      <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                        <button className="btn" onClick={() => void createFileFromAssistant(idx)} disabled={busy || !root}>
+                          Create file…
+                        </button>
+                      </div>
+                    ) : null}
+
                     {patch ? (
                       <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                         <button className="btn primary" onClick={() => void applyAssistantAuto(idx)} disabled={busy || !root}>
