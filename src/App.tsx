@@ -86,9 +86,9 @@ type AiProvider = {
 
 type AiChatResult = { code: number; output: string };
 
-type PatchApplyResult = { ok: boolean; file: string; message: string };
+// type PatchApplyResult removed (patch flow disabled)
 
-type PatchPreviewResult = { ok: boolean; file: string; start_line: number; after: string; message: string };
+// type PatchPreviewResult removed (patch preview disabled for now)
 
 type SvlabConfig = {
   top: string;
@@ -211,12 +211,13 @@ export default function App() {
   });
   const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
   const [aiInput, setAiInput] = useState<string>("");
-  const [aiPatchOpen, setAiPatchOpen] = useState<boolean>(false);
-  const [aiPatchText, setAiPatchText] = useState<string>("");
-  const [aiPatchFile, setAiPatchFile] = useState<string>("");
+  // Patch preview/apply flow disabled for now; using full-file apply for reliability.
+  const [_aiPatchOpen, _setAiPatchOpen] = useState<boolean>(false);
+  const [_aiPatchText, _setAiPatchText] = useState<string>("");
+  const [_aiPatchFile, _setAiPatchFile] = useState<string>("");
 
-  const [aiInlinePatch, setAiInlinePatch] = useState<{ file: string; line: number; after: string } | null>(null);
-  const [aiInlineY, setAiInlineY] = useState<number>(12);
+  const [_aiInlinePatch, _setAiInlinePatch] = useState<{ file: string; line: number; after: string } | null>(null);
+  const [_aiInlineY, _setAiInlineY] = useState<number>(12);
   const [psCreateRtl, setPsCreateRtl] = useState<boolean>(true);
   const [psCreateTb, setPsCreateTb] = useState<boolean>(true);
   const [psWriteFilelist, setPsWriteFilelist] = useState<boolean>(true);
@@ -226,7 +227,7 @@ export default function App() {
   const [cursorCol, setCursorCol] = useState<number>(1);
 
   const editorRef = useRef<any>(null);
-  const aiInlineRef = useRef<{ file: string; line: number; after: string } | null>(null);
+  // const _aiInlineRef = useRef<{ file: string; line: number; after: string } | null>(null);
   const buildMenuRef = useRef<HTMLDetailsElement | null>(null);
   const projectMenuRef = useRef<HTMLDetailsElement | null>(null);
   const toolsMenuRef = useRef<HTMLDetailsElement | null>(null);
@@ -316,9 +317,7 @@ export default function App() {
     }
   }, [aiMessages]);
 
-  useEffect(() => {
-    aiInlineRef.current = aiInlinePatch;
-  }, [aiInlinePatch]);
+  // inline patch preview disabled
 
   // Persist last active file + cursor (best-effort).
   useEffect(() => {
@@ -357,6 +356,34 @@ export default function App() {
     return body ? body : null;
   };
 
+  const looksLikeDiff = (text: string): boolean => {
+    const t = (text || "").trim();
+    return /^(diff --git |--- |\+\+\+ |@@ )/m.test(t);
+  };
+
+  const stripLeadingDiffMarkers = (text: string): string => {
+    // If the AI accidentally includes diff prefixes in a "full file" response, strip them.
+    // This is intentionally conservative.
+    const lines = (text || "").replace(/\r\n/g, "\n").split("\n");
+    const out: string[] = [];
+    for (const l of lines) {
+      if (l.startsWith("diff --git ") || l.startsWith("index ") || l.startsWith("--- ") || l.startsWith("+++ ") || l.startsWith("@@")) {
+        continue;
+      }
+      if (l.startsWith("+")) {
+        out.push(l.slice(1));
+        continue;
+      }
+      if (l.startsWith(" ")) {
+        out.push(l.slice(1));
+        continue;
+      }
+      // We do NOT strip '-' because that could delete real content.
+      out.push(l);
+    }
+    return out.join("\n").trimEnd();
+  };
+
   const applyAssistantAsFullFile = async (assistantIndex: number) => {
     if (!root) return;
     const assistantText = aiMessages[assistantIndex]?.content || "";
@@ -393,9 +420,20 @@ export default function App() {
       const reply = (res.output || "").trim();
       setAiMessages((prev) => [...prev, { role: "assistant", content: reply || "(no response)" }]);
 
-      const newFile = tryExtractCodeBlock(reply);
+      let newFile = tryExtractCodeBlock(reply);
       if (!newFile) {
         pushRun({ title: "AI (error)", output: "AI did not return a fenced code block with full file contents." });
+        return;
+      }
+
+      if (looksLikeDiff(newFile)) {
+        // The model ignored instructions and returned a diff; try to strip markers.
+        newFile = stripLeadingDiffMarkers(newFile);
+      }
+
+      // Last sanity: if it still looks like a diff, bail.
+      if (looksLikeDiff(newFile)) {
+        pushRun({ title: "AI (error)", output: "AI returned a diff instead of full file contents. Try again." });
         return;
       }
 
@@ -415,90 +453,10 @@ export default function App() {
     }
   };
 
-  const openPatchPreviewFromAssistant = (assistantText: string) => {
-    const got = tryExtractDiffPatch(assistantText);
-    if (!got) {
-      pushRun({ title: "AI", output: "No ```diff``` patch found in the assistant message." });
-      return;
-    }
+  // Patch preview flow is currently disabled (too flaky with local models).
+  // We'll re-enable after we generate patches ourselves.
 
-    const normalizedFile = (got.file || "").replace(/\\/g, "/");
-    const isOpen = !!openTabs.find((t) => t.relPath === normalizedFile);
-
-    if (root && normalizedFile && isOpen) {
-      // Inline preview when file is open
-      // Ensure the target file tab is active so the inline bubble is visible.
-      setActiveRel(normalizedFile);
-
-      void (async () => {
-        try {
-          const prev = (await invoke("project_patch_preview", { root, patch: got.patch })) as PatchPreviewResult;
-          if (!prev.ok) {
-            setBottomTab("terminal");
-            pushRun({ title: "Patch preview (error)", output: prev.message || "preview failed" });
-            return;
-          }
-          setAiPatchText(got.patch);
-          setAiPatchFile(prev.file || normalizedFile);
-          setAiInlinePatch({ file: normalizedFile, line: prev.start_line || 1, after: prev.after || "" });
-
-          // try to scroll to the line and position the bubble under it
-          setTimeout(() => {
-            const ed = editorRef.current;
-            if (!ed) return;
-            const ln = prev.start_line || 1;
-            ed.revealLineInCenter(ln);
-            try {
-              const pos = ed.getScrolledVisiblePosition({ lineNumber: ln, column: 1 });
-              if (pos && typeof pos.top === "number") {
-                setAiInlineY(Math.max(12, Math.floor(pos.top + pos.height + 8)));
-              }
-            } catch {
-              // ignore
-            }
-          }, 60);
-        } catch (e: any) {
-          setBottomTab("terminal");
-          pushRun({ title: "Patch preview (error)", output: String(e ?? "") });
-        }
-      })();
-      return;
-    }
-
-    // Fallback: modal
-    setAiPatchText(got.patch);
-    setAiPatchFile(got.file);
-    setAiPatchOpen(true);
-  };
-
-  const applyPatch = async () => {
-    if (!root || !aiPatchText.trim()) return;
-    setBusy(true);
-    setBottomTab("terminal");
-    try {
-      const res = (await invoke("project_apply_patch", { root, patch: aiPatchText })) as PatchApplyResult;
-      pushRun({ title: "Apply patch", output: `${res.message}${res.file ? `\nFile: ${res.file}` : ""}` });
-      await refreshTree(root);
-      if (res.file) {
-        // reload if open
-        const normalized = res.file.replace(/\\/g, "/");
-        if (openTabs.find((t) => t.relPath === normalized)) {
-          try {
-            const text = (await invoke("project_read_file", { root, relPath: normalized })) as string;
-            setOpenTabs((prev) => prev.map((t) => (t.relPath === normalized ? { ...t, value: text ?? "", dirty: false } : t)));
-          } catch {
-            // ignore
-          }
-        }
-      }
-      setAiPatchOpen(false);
-      setAiInlinePatch(null);
-    } catch (e: any) {
-      pushRun({ title: "Apply patch (error)", output: String(e ?? "") });
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Patch apply flow disabled for now (local models are too flaky producing valid hunks).
 
   const aiSend = async (text: string) => {
     const content = (text || "").trim();
@@ -1967,18 +1925,7 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
                     setCursorLine(e.position.lineNumber);
                     setCursorCol(e.position.column);
                   });
-                  ed.onDidScrollChange(() => {
-                    const cur = aiInlineRef.current;
-                    if (!cur) return;
-                    try {
-                      const pos = ed.getScrolledVisiblePosition({ lineNumber: cur.line, column: 1 });
-                      if (pos && typeof pos.top === "number") {
-                        setAiInlineY(Math.max(12, Math.floor(pos.top + pos.height + 8)));
-                      }
-                    } catch {
-                      // ignore
-                    }
-                  });
+                  // (inline patch preview disabled)
                 }}
                 onChange={(val) => {
                   const v = val ?? "";
@@ -1999,34 +1946,7 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
                 }}
               />
 
-              {aiInlinePatch && activeTab?.relPath === aiInlinePatch.file ? (
-                <div
-                  className="inlinePatch"
-                  style={{
-                    position: "absolute",
-                    left: 12,
-                    top: aiInlineY,
-                    right: 12,
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                    <div style={{ fontWeight: 800 }}>Suggested change</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button className="btn" onClick={() => setAiInlinePatch(null)} disabled={busy}>
-                        Dismiss
-                      </button>
-                      <button className="btn primary" onClick={() => void applyPatch()} disabled={busy}>
-                        Apply
-                      </button>
-                    </div>
-                  </div>
-                  <div className="ctx__sep" style={{ margin: "10px 0" }} />
-                  <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
-                    {aiInlinePatch.file}:{aiInlinePatch.line}
-                  </div>
-                  <pre className="terminal__body" style={{ margin: 0, maxHeight: 140, overflow: "auto" }}>{aiInlinePatch.after || ""}</pre>
-                </div>
-              ) : null}
+              {/* inline patch preview disabled */}
             </div>
             ) : (
               <div className="panel muted">No file open.</div>
@@ -2213,11 +2133,8 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
                     <div className="aiMsg__content">{m.content}</div>
                     {patch ? (
                       <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                        <button className="btn" onClick={() => openPatchPreviewFromAssistant(m.content)} disabled={busy}>
-                          Preview patch
-                        </button>
                         <button className="btn primary" onClick={() => void applyAssistantAsFullFile(idx)} disabled={busy || !root}>
-                          Apply (full file)
+                          Apply
                         </button>
                       </div>
                     ) : null}
@@ -2252,27 +2169,7 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
           </div>
       </div>
 
-      {aiPatchOpen ? (
-        <div
-          className="ctx"
-          style={{ left: 120, top: 80, width: 820, maxWidth: "calc(100vw - 140px)", maxHeight: "calc(100vh - 140px)" }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px" }}>
-            <div style={{ fontWeight: 800 }}>Patch preview {aiPatchFile ? `· ${aiPatchFile}` : ""}</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn" onClick={() => setAiPatchOpen(false)} disabled={busy}>
-                Close
-              </button>
-              <button className="btn primary" onClick={() => void applyPatch()} disabled={busy || !aiPatchText.trim()}>
-                Apply
-              </button>
-            </div>
-          </div>
-          <div className="ctx__sep" />
-          <pre className="terminal__body" style={{ margin: 0, maxHeight: "calc(100vh - 220px)", overflow: "auto" }}>{aiPatchText}</pre>
-        </div>
-      ) : null}
+      {/* patch preview modal disabled */}
 
       <div className="statusbar">
         <div className="statusbar__left">
