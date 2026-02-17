@@ -86,6 +86,8 @@ type AiProvider = {
 
 type AiChatResult = { code: number; output: string };
 
+type PatchApplyResult = { ok: boolean; file: string; message: string };
+
 type SvlabConfig = {
   top: string;
   filelist: string;
@@ -207,6 +209,9 @@ export default function App() {
   });
   const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
   const [aiInput, setAiInput] = useState<string>("");
+  const [aiPatchOpen, setAiPatchOpen] = useState<boolean>(false);
+  const [aiPatchText, setAiPatchText] = useState<string>("");
+  const [aiPatchFile, setAiPatchFile] = useState<string>("");
   const [psCreateRtl, setPsCreateRtl] = useState<boolean>(true);
   const [psCreateTb, setPsCreateTb] = useState<boolean>(true);
   const [psWriteFilelist, setPsWriteFilelist] = useState<boolean>(true);
@@ -321,6 +326,56 @@ export default function App() {
       // ignore
     }
   }, [root, activeRel, cursorLine, cursorCol]);
+
+  const tryExtractDiffPatch = (s: string): { patch: string; file: string } | null => {
+    const m = (s || "").match(/```diff\s*([\s\S]*?)```/i);
+    if (!m) return null;
+    const patch = m[1]?.trim() || "";
+    if (!patch) return null;
+    const fileMatch = patch.match(/^\+\+\+\s+([^\r\n]+)$/m);
+    let file = (fileMatch?.[1] || "").trim();
+    if (file.startsWith("b/")) file = file.slice(2);
+    return { patch, file };
+  };
+
+  const openPatchPreviewFromAssistant = (assistantText: string) => {
+    const got = tryExtractDiffPatch(assistantText);
+    if (!got) {
+      pushRun({ title: "AI", output: "No ```diff``` patch found in the assistant message." });
+      return;
+    }
+    setAiPatchText(got.patch);
+    setAiPatchFile(got.file);
+    setAiPatchOpen(true);
+  };
+
+  const applyPatch = async () => {
+    if (!root || !aiPatchText.trim()) return;
+    setBusy(true);
+    setBottomTab("terminal");
+    try {
+      const res = (await invoke("project_apply_patch", { root, patch: aiPatchText })) as PatchApplyResult;
+      pushRun({ title: "Apply patch", output: `${res.message}${res.file ? `\nFile: ${res.file}` : ""}` });
+      await refreshTree(root);
+      if (res.file) {
+        // reload if open
+        const normalized = res.file.replace(/\\/g, "/");
+        if (openTabs.find((t) => t.relPath === normalized)) {
+          try {
+            const text = (await invoke("project_read_file", { root, relPath: normalized })) as string;
+            setOpenTabs((prev) => prev.map((t) => (t.relPath === normalized ? { ...t, value: text ?? "", dirty: false } : t)));
+          } catch {
+            // ignore
+          }
+        }
+      }
+      setAiPatchOpen(false);
+    } catch (e: any) {
+      pushRun({ title: "Apply patch (error)", output: String(e ?? "") });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const aiSend = async (text: string) => {
     const content = (text || "").trim();
@@ -1976,12 +2031,22 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
             {aiMessages.length === 0 ? (
               <div className="muted">Ask for help, or paste an error log.</div>
             ) : (
-              aiMessages.map((m, idx) => (
-                <div key={idx} className={"aiMsg aiMsg--" + m.role}>
-                  <div className="aiMsg__role">{m.role}</div>
-                  <div className="aiMsg__content">{m.content}</div>
-                </div>
-              ))
+              aiMessages.map((m, idx) => {
+                const patch = m.role === "assistant" ? tryExtractDiffPatch(m.content) : null;
+                return (
+                  <div key={idx} className={"aiMsg aiMsg--" + m.role}>
+                    <div className="aiMsg__role">{m.role}</div>
+                    <div className="aiMsg__content">{m.content}</div>
+                    {patch ? (
+                      <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
+                        <button className="btn" onClick={() => openPatchPreviewFromAssistant(m.content)} disabled={busy}>
+                          Preview patch
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })
             )}
           </div>
 
@@ -2008,6 +2073,28 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
             </div>
           </div>
       </div>
+
+      {aiPatchOpen ? (
+        <div
+          className="ctx"
+          style={{ left: 120, top: 80, width: 820, maxWidth: "calc(100vw - 140px)", maxHeight: "calc(100vh - 140px)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px" }}>
+            <div style={{ fontWeight: 800 }}>Patch preview {aiPatchFile ? `· ${aiPatchFile}` : ""}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn" onClick={() => setAiPatchOpen(false)} disabled={busy}>
+                Close
+              </button>
+              <button className="btn primary" onClick={() => void applyPatch()} disabled={busy || !aiPatchText.trim()}>
+                Apply
+              </button>
+            </div>
+          </div>
+          <div className="ctx__sep" />
+          <pre className="terminal__body" style={{ margin: 0, maxHeight: "calc(100vh - 220px)", overflow: "auto" }}>{aiPatchText}</pre>
+        </div>
+      ) : null}
 
       <div className="statusbar">
         <div className="statusbar__left">

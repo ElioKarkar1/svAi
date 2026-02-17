@@ -4,6 +4,8 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use diffy::apply;
+use diffy::Patch;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 
 #[cfg(windows)]
@@ -1180,6 +1182,55 @@ fn gather_project_text(root: &Path, max_files: usize, max_chars: usize) -> Resul
     Ok(out)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PatchApplyResult {
+    ok: bool,
+    file: String,
+    message: String,
+}
+
+fn extract_patch_target_file(patch_text: &str) -> Result<String, String> {
+    // Prefer +++ b/<file>
+    for line in patch_text.lines() {
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            let f = rest.trim();
+            if f.starts_with("b/") {
+                return Ok(f.trim_start_matches("b/").to_string());
+            }
+            if f != "/dev/null" {
+                return Ok(f.to_string());
+            }
+        }
+    }
+    Err("Couldn't determine patch target file (expected +++ b/<file>)".to_string())
+}
+
+#[tauri::command]
+fn project_apply_patch(root: String, patch: String) -> Result<PatchApplyResult, String> {
+    let rootp = PathBuf::from(&root);
+    let _canon = rootp
+        .canonicalize()
+        .map_err(|e| format!("Invalid root: {e}"))?;
+
+    let target_rel = extract_patch_target_file(&patch)?;
+    let target_rel_norm = target_rel.replace('\\', "/");
+    let p = rootp.join(&target_rel_norm);
+    ensure_within_root(&rootp, &p)?;
+
+    let old = fs::read_to_string(&p).map_err(|e| format!("Failed to read target file: {e}"))?;
+
+    let patch_obj = Patch::from_str(&patch).map_err(|e| format!("Invalid patch: {e}"))?;
+    let new = apply(&old, &patch_obj).map_err(|e| format!("Patch didn't apply cleanly: {e}"))?;
+
+    fs::write(&p, new).map_err(|e| format!("Failed to write target file: {e}"))?;
+
+    Ok(PatchApplyResult {
+        ok: true,
+        file: target_rel_norm,
+        message: "Applied patch".to_string(),
+    })
+}
+
 #[tauri::command]
 async fn ai_chat(
     root: String,
@@ -1876,6 +1927,7 @@ pub fn run() {
             project_setup_apply,
             project_new_create,
             ai_chat,
+            project_apply_patch,
             project_build,
             project_run,
             project_open_waves
