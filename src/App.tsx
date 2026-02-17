@@ -2440,7 +2440,9 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                               void moveTreePath(from, n.path);
                             }}
                           >
-                            <button
+                            <div
+                              role="button"
+                              tabIndex={0}
                               className={
                                 "treeRow treeRow--dir " +
                                 (selected === n.path ? "is-selected " : "") +
@@ -2451,6 +2453,13 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                                 setSelected(n.path);
                                 toggleExpanded(n.path);
                               }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  setSelected(n.path);
+                                  toggleExpanded(n.path);
+                                }
+                              }}
                               onContextMenu={(e) => {
                                 e.preventDefault();
                                 setSelected(n.path);
@@ -2459,13 +2468,26 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                               draggable
                               onDragStart={(e) => {
                                 e.dataTransfer.setData("text/plain", n.path);
+                                try {
+                                  e.dataTransfer.setData("application/x-svai-path", n.path);
+                                } catch {}
                                 e.dataTransfer.effectAllowed = "move";
+                              }}
+                              onDragEnter={(e) => {
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = "move";
+                                setDragOverPath(n.path);
+                              }}
+                              onDragOver={(e) => {
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = "move";
+                                setDragOverPath(n.path);
                               }}
                             >
                               <span className="chev">{isOpen ? "▾" : "▸"}</span>
                               <span className="treeIcon">📁</span>
                               <span className="treeName">{n.name}</span>
-                            </button>
+                            </div>
                             {isOpen ? n.children.map((c) => renderNode(c, depth + 1)) : null}
                           </div>
                         );
@@ -2474,13 +2496,22 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                       const lower = n.name.toLowerCase();
                       const icon = lower.endsWith(".sv") || lower.endsWith(".svh") || lower.endsWith(".v") ? "{}" : lower.endsWith(".json") ? "{ }" : lower.endsWith(".f") ? "≡" : "·";
                       return (
-                        <button
+                        <div
                           key={n.path}
+                          role="button"
+                          tabIndex={0}
                           className={"treeRow treeRow--file " + (selected === n.path ? "is-selected" : "")}
                           style={{ paddingLeft: pad + 18 }}
                           onClick={() => {
                             setSelected(n.path);
                             void openFile(n.path);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setSelected(n.path);
+                              void openFile(n.path);
+                            }
                           }}
                           onContextMenu={(e) => {
                             e.preventDefault();
@@ -2490,12 +2521,15 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                           draggable
                           onDragStart={(e) => {
                             e.dataTransfer.setData("text/plain", n.path);
+                            try {
+                              e.dataTransfer.setData("application/x-svai-path", n.path);
+                            } catch {}
                             e.dataTransfer.effectAllowed = "move";
                           }}
                         >
                           <span className="treeIcon treeIcon--file">{icon}</span>
                           <span className="treeName">{n.name}</span>
-                        </button>
+                        </div>
                       );
                     };
 

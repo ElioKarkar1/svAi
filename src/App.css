@@ -482,6 +482,12 @@ button, input, textarea {
   background: transparent;
   color: rgba(255,255,255,0.80);
   cursor: pointer;
+  user-select: none;
+}
+
+.treeRow:focus {
+  outline: 2px solid rgba(0,122,204,0.35);
+  outline-offset: 2px;
 }
 
 .treeRow:hover {
