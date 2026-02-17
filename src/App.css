@@ -493,6 +493,11 @@ button, input, textarea {
   background: rgba(0,122,204,0.12);
 }
 
+.treeRow.is-dragOver {
+  outline: 2px dashed rgba(34,197,94,0.55);
+  outline-offset: -2px;
+}
+
 .chev {
   width: 14px;
   color: rgba(255,255,255,0.55);

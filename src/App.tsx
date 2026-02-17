@@ -250,6 +250,7 @@ export default function App() {
   const toolsMenuRef = useRef<HTMLDetailsElement | null>(null);
 
   const [ctxMenu, setCtxMenu] = useState<CtxMenu>(null);
+  const [dragOverPath, setDragOverPath] = useState<string>("");
 
   const problemsText = useMemo(() => {
     if (!root) return "Open a project to see diagnostics.";
@@ -1362,6 +1363,77 @@ export default function App() {
     return lower.endsWith(".sv") || lower.endsWith(".svh") || lower.endsWith(".v") || lower.endsWith(".json") || lower.endsWith(".f");
   };
 
+  const baseName = (p: string): string => {
+    const s = (p || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    const parts = s.split("/").filter(Boolean);
+    return parts[parts.length - 1] || "";
+  };
+
+  const isSubpath = (parent: string, child: string): boolean => {
+    const p = (parent || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    const c = (child || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    if (!p || !c) return false;
+    return c === p || c.startsWith(p + "/");
+  };
+
+  const moveTreePath = async (fromRel: string, toDirRel: string) => {
+    if (!root) return;
+    const from = (fromRel || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+    const toDir = (toDirRel || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+    if (!from || !toDir) return;
+    if (isBlockedRelPath(from) || isBlockedRelPath(toDir)) {
+      pushRun({ title: "Move", output: "Refusing to move blocked paths." });
+      return;
+    }
+    // Don't allow moving a folder into itself (or its children)
+    if (isSubpath(from, toDir)) {
+      pushRun({ title: "Move", output: "Can't move a folder into itself." });
+      return;
+    }
+
+    const name = baseName(from);
+    if (!name) return;
+    const to = `${toDir}/${name}`.replace(/\/+/, "/");
+    if (to === from) return;
+
+    setBusy(true);
+    setBottomTab("terminal");
+    try {
+      await invoke("project_rename", { root, fromRel: from, toRel: to });
+      pushRun({ title: "Move", output: `${from} → ${to}` });
+
+      // Update open tabs paths (file or directory move)
+      setOpenTabs((prev) =>
+        prev.map((t) => {
+          const rp = t.relPath;
+          if (rp === from) return { ...t, relPath: to, title: baseName(to) };
+          if (rp.startsWith(from + "/")) {
+            const next = to + rp.slice(from.length);
+            return { ...t, relPath: next, title: baseName(next) };
+          }
+          return t;
+        })
+      );
+      setActiveRel((prev) => {
+        if (prev === from) return to;
+        if (prev.startsWith(from + "/")) return to + prev.slice(from.length);
+        return prev;
+      });
+      setSelected((prev) => {
+        if (prev === from) return to;
+        if (prev.startsWith(from + "/")) return to + prev.slice(from.length);
+        return prev;
+      });
+
+      await refreshTree(root);
+    } catch (e: any) {
+      pushRun({ title: "Move (error)", output: String(e?.message ?? e ?? "") });
+    } finally {
+      setBusy(false);
+      setDragOverPath("");
+    }
+  };
+
   const buildTree = (items: FsNode[]): TreeNode => {
     const rootNode: TreeNode = { name: "", path: "", isDir: true, children: [] };
 
@@ -2352,7 +2424,11 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                         return (
                           <div key={n.path}>
                             <button
-                              className={"treeRow treeRow--dir " + (selected === n.path ? "is-selected" : "")}
+                              className={
+                                "treeRow treeRow--dir " +
+                                (selected === n.path ? "is-selected " : "") +
+                                (dragOverPath === n.path ? "is-dragOver" : "")
+                              }
                               style={{ paddingLeft: pad }}
                               onClick={() => {
                                 setSelected(n.path);
@@ -2362,6 +2438,23 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                                 e.preventDefault();
                                 setSelected(n.path);
                                 setCtxMenu({ x: e.clientX, y: e.clientY, path: n.path, isDir: true });
+                              }}
+                              draggable
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData("text/plain", n.path);
+                                e.dataTransfer.effectAllowed = "move";
+                              }}
+                              onDragOver={(e) => {
+                                e.preventDefault();
+                                setDragOverPath(n.path);
+                              }}
+                              onDragLeave={() => {
+                                setDragOverPath((prev) => (prev === n.path ? "" : prev));
+                              }}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                const from = e.dataTransfer.getData("text/plain") || "";
+                                void moveTreePath(from, n.path);
                               }}
                             >
                               <span className="chev">{isOpen ? "▾" : "▸"}</span>
@@ -2388,6 +2481,11 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                             e.preventDefault();
                             setSelected(n.path);
                             setCtxMenu({ x: e.clientX, y: e.clientY, path: n.path, isDir: false });
+                          }}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData("text/plain", n.path);
+                            e.dataTransfer.effectAllowed = "move";
                           }}
                         >
                           <span className="treeIcon treeIcon--file">{icon}</span>
