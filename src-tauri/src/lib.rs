@@ -1242,12 +1242,60 @@ fn parse_first_new_start(patch_text: &str) -> Option<usize> {
     None
 }
 
+fn ensure_unified_headers(patch_text: &str) -> String {
+    // If the model only outputs +++ but not ---, synthesize the missing header.
+    let mut p = patch_text.to_string();
+
+    let has_old = p.contains("\n--- ") || p.starts_with("--- ");
+    let has_new = p.contains("\n+++ ") || p.starts_with("+++ ");
+
+    if has_new && !has_old {
+        // Find the first +++ line and derive --- a/<file>.
+        if let Some(line) = p.lines().find(|l| l.starts_with("+++ ")) {
+            let mut f = line.trim_start_matches("+++ ").trim().to_string();
+            if f.starts_with("b/") {
+                f = format!("a/{}", f.trim_start_matches("b/"));
+            }
+            let insert = format!("--- {}\n", f);
+            // Insert before the +++ line.
+            if let Some(idx) = p.find(line) {
+                p.insert_str(idx, &insert);
+            } else {
+                p = format!("{}{}", insert, p);
+            }
+        }
+    }
+
+    if has_old && !has_new {
+        if let Some(line) = p.lines().find(|l| l.starts_with("--- ")) {
+            let mut f = line.trim_start_matches("--- ").trim().to_string();
+            if f.starts_with("a/") {
+                f = format!("b/{}", f.trim_start_matches("a/"));
+            }
+            let insert = format!("+++ {}\n", f);
+            // Insert after the --- line.
+            if let Some(idx) = p.find(line) {
+                let at = idx + line.len();
+                p.insert_str(at, &format!("\n{}", insert.trim_end()));
+            } else {
+                p.push_str("\n");
+                p.push_str(&insert);
+            }
+        }
+    }
+
+    p
+}
+
 fn apply_patch_to_text(old_raw: &str, patch_text: &str) -> Result<String, String> {
     let old = old_raw.replace("\r\n", "\n");
-    let patch_for_diffy = strip_to_unified_diff(patch_text);
+    let patch_for_diffy = ensure_unified_headers(&strip_to_unified_diff(patch_text));
 
-    if !patch_for_diffy.contains("\n+++ ") || !patch_for_diffy.contains("\n--- ") {
-        return Err("Patch must include both --- and +++ headers".to_string());
+    // Validate headers exist at the start or within the first few lines
+    let has_old = patch_for_diffy.contains("\n--- ") || patch_for_diffy.starts_with("--- ");
+    let has_new = patch_for_diffy.contains("\n+++ ") || patch_for_diffy.starts_with("+++ ");
+    if !has_old || !has_new {
+        return Err("Patch must include --- and +++ headers".to_string());
     }
 
     let patch_obj = Patch::from_str(&patch_for_diffy).map_err(|e| format!("Invalid patch: {e}"))?;
