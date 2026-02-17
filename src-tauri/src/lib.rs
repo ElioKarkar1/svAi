@@ -1217,10 +1217,20 @@ fn project_apply_patch(root: String, patch: String) -> Result<PatchApplyResult, 
     let p = rootp.join(&target_rel_norm);
     ensure_within_root(&rootp, &p)?;
 
-    let old = fs::read_to_string(&p).map_err(|e| format!("Failed to read target file: {e}"))?;
+    let old_raw = fs::read_to_string(&p).map_err(|e| format!("Failed to read target file: {e}"))?;
+    let had_crlf = old_raw.contains("\r\n");
 
-    let patch_obj = Patch::from_str(&patch).map_err(|e| format!("Invalid patch: {e}"))?;
-    let new = apply(&old, &patch_obj).map_err(|e| format!("Patch didn't apply cleanly: {e}"))?;
+    // Normalize line endings so patches created on other platforms apply reliably.
+    let old = old_raw.replace("\r\n", "\n");
+    let patch_norm = patch.replace("\r\n", "\n");
+
+    let patch_obj = Patch::from_str(&patch_norm).map_err(|e| format!("Invalid patch: {e}"))?;
+    let mut new =
+        apply(&old, &patch_obj).map_err(|e| format!("Patch didn't apply cleanly: {e}"))?;
+
+    if had_crlf {
+        new = new.replace("\n", "\r\n");
+    }
 
     fs::write(&p, new).map_err(|e| format!("Failed to write target file: {e}"))?;
 
