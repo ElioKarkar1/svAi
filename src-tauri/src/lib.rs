@@ -124,9 +124,19 @@ fn ensure_within_root(root: &Path, p: &Path) -> Result<(), String> {
     let canon_root = root
         .canonicalize()
         .map_err(|e| format!("Failed to canonicalize root: {e}"))?;
-    let canon = p
-        .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize path: {e}"))?;
+
+    // If the target exists, canonicalize it; otherwise canonicalize its parent.
+    // This allows safe checks for create/write operations.
+    let canon = if p.exists() {
+        p.canonicalize()
+            .map_err(|e| format!("Failed to canonicalize path: {e}"))?
+    } else {
+        let parent = p.parent().ok_or_else(|| "Invalid path".to_string())?;
+        parent
+            .canonicalize()
+            .map_err(|e| format!("Failed to canonicalize parent: {e}"))?
+    };
+
     if !canon.starts_with(&canon_root) {
         return Err("Refusing to access path outside project root".to_string());
     }
