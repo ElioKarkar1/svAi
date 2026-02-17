@@ -22,6 +22,7 @@ svAi expects an MSYS2-based Verilator toolchain.
 ```bash
 pacman -Syu
 pacman -S --needed \
+  make \
   mingw-w64-ucrt-x86_64-gcc \
   mingw-w64-ucrt-x86_64-make \
   mingw-w64-ucrt-x86_64-verilator \

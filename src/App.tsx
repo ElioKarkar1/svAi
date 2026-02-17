@@ -1540,7 +1540,7 @@ export default function App() {
             </div>
             <pre className="terminal__body" style={{ margin: 0 }}>
 {`pacman -Syu\n
-pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-make \\\n  mingw-w64-ucrt-x86_64-verilator \\\n  python \\\n  mingw-w64-ucrt-x86_64-gtkwave`}
+pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-make \\\n  mingw-w64-ucrt-x86_64-verilator \\\n  python \\\n  mingw-w64-ucrt-x86_64-gtkwave`}
             </pre>
 
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
@@ -1550,7 +1550,7 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
                   void (async () => {
                     try {
                       await navigator.clipboard.writeText(
-                        `pacman -Syu\n\npacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-make \\\n  mingw-w64-ucrt-x86_64-verilator \\\n  python \\\n  mingw-w64-ucrt-x86_64-gtkwave`
+                        `pacman -Syu\n\npacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-make \\\n  mingw-w64-ucrt-x86_64-verilator \\\n  python \\\n  mingw-w64-ucrt-x86_64-gtkwave`
                       );
                       pushRun({ title: "Setup", output: "Copied install command to clipboard." });
                     } catch {
