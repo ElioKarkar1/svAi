@@ -504,6 +504,11 @@ button, input, textarea {
   outline-offset: -2px;
 }
 
+.treeRow--file,
+.treeRow--dir {
+  -webkit-user-drag: none;
+}
+
 .chev {
   width: 14px;
   color: rgba(255,255,255,0.55);

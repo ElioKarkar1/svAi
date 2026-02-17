@@ -251,6 +251,9 @@ export default function App() {
 
   const [ctxMenu, setCtxMenu] = useState<CtxMenu>(null);
   const [dragOverPath, setDragOverPath] = useState<string>("");
+  const [dragFromPath, setDragFromPath] = useState<string>("");
+  const [dragging, setDragging] = useState<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number; path: string } | null>(null);
 
   const problemsText = useMemo(() => {
     if (!root) return "Open a project to see diagnostics.";
@@ -296,6 +299,33 @@ export default function App() {
     if (projectMenuRef.current) projectMenuRef.current.open = false;
     if (toolsMenuRef.current) toolsMenuRef.current.open = false;
   };
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = dragStartRef.current;
+      if (!d) return;
+      const dx = Math.abs(e.clientX - d.x);
+      const dy = Math.abs(e.clientY - d.y);
+      if (!dragging && (dx > 4 || dy > 4)) {
+        setDragging(true);
+        setDragFromPath(d.path);
+      }
+    };
+
+    const onUp = () => {
+      dragStartRef.current = null;
+      setDragging(false);
+      setDragFromPath("");
+      setDragOverPath("");
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [dragging]);
 
   // Load AI settings/messages (best-effort)
   useEffect(() => {
@@ -2449,7 +2479,20 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                                 (dragOverPath === n.path ? "is-dragOver" : "")
                               }
                               style={{ paddingLeft: pad }}
+                              onMouseDown={(e) => {
+                                if (e.button !== 0) return;
+                                dragStartRef.current = { x: e.clientX, y: e.clientY, path: n.path };
+                              }}
+                              onMouseEnter={() => {
+                                if (dragging && dragFromPath) setDragOverPath(n.path);
+                              }}
+                              onMouseUp={() => {
+                                if (dragging && dragFromPath && dragFromPath !== n.path) {
+                                  void moveTreePath(dragFromPath, n.path);
+                                }
+                              }}
                               onClick={() => {
+                                if (dragging) return;
                                 setSelected(n.path);
                                 toggleExpanded(n.path);
                               }}
@@ -2464,24 +2507,6 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                                 e.preventDefault();
                                 setSelected(n.path);
                                 setCtxMenu({ x: e.clientX, y: e.clientY, path: n.path, isDir: true });
-                              }}
-                              draggable
-                              onDragStart={(e) => {
-                                e.dataTransfer.setData("text/plain", n.path);
-                                try {
-                                  e.dataTransfer.setData("application/x-svai-path", n.path);
-                                } catch {}
-                                e.dataTransfer.effectAllowed = "move";
-                              }}
-                              onDragEnter={(e) => {
-                                e.preventDefault();
-                                e.dataTransfer.dropEffect = "move";
-                                setDragOverPath(n.path);
-                              }}
-                              onDragOver={(e) => {
-                                e.preventDefault();
-                                e.dataTransfer.dropEffect = "move";
-                                setDragOverPath(n.path);
                               }}
                             >
                               <span className="chev">{isOpen ? "▾" : "▸"}</span>
@@ -2502,7 +2527,12 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                           tabIndex={0}
                           className={"treeRow treeRow--file " + (selected === n.path ? "is-selected" : "")}
                           style={{ paddingLeft: pad + 18 }}
+                          onMouseDown={(e) => {
+                            if (e.button !== 0) return;
+                            dragStartRef.current = { x: e.clientX, y: e.clientY, path: n.path };
+                          }}
                           onClick={() => {
+                            if (dragging) return;
                             setSelected(n.path);
                             void openFile(n.path);
                           }}
@@ -2517,14 +2547,6 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                             e.preventDefault();
                             setSelected(n.path);
                             setCtxMenu({ x: e.clientX, y: e.clientY, path: n.path, isDir: false });
-                          }}
-                          draggable
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData("text/plain", n.path);
-                            try {
-                              e.dataTransfer.setData("application/x-svai-path", n.path);
-                            } catch {}
-                            e.dataTransfer.effectAllowed = "move";
                           }}
                         >
                           <span className="treeIcon treeIcon--file">{icon}</span>
