@@ -1287,11 +1287,54 @@ fn ensure_unified_headers(patch_text: &str) -> String {
     p
 }
 
+fn normalize_hunk_prefixes(patch_text: &str) -> String {
+    // Many models omit the leading " "/"+"/"-" prefixes on hunk lines.
+    // Fix-up: for lines within a hunk, prefix a single space if missing.
+    let mut out: Vec<String> = Vec::new();
+    let mut in_hunk = false;
+
+    for raw in patch_text.replace("\r\n", "\n").lines() {
+        let line = raw.to_string();
+
+        if line.starts_with("@@") {
+            in_hunk = true;
+            out.push(line);
+            continue;
+        }
+        if in_hunk {
+            // next file header or end of patch exits hunk
+            if line.starts_with("--- ") || line.starts_with("+++ ") {
+                in_hunk = false;
+                out.push(line);
+                continue;
+            }
+
+            if line.is_empty() {
+                out.push(" ".to_string());
+                continue;
+            }
+
+            let c0 = line.chars().next().unwrap_or(' ');
+            if c0 == ' ' || c0 == '+' || c0 == '-' || c0 == '\\' {
+                out.push(line);
+            } else {
+                out.push(format!(" {}", line));
+            }
+            continue;
+        }
+
+        out.push(line);
+    }
+
+    out.join("\n")
+}
+
 fn apply_patch_to_text(old_raw: &str, patch_text: &str) -> Result<String, String> {
     let old = old_raw.replace("\r\n", "\n");
-    let patch_for_diffy = ensure_unified_headers(&strip_to_unified_diff(patch_text));
+    let patch_for_diffy =
+        normalize_hunk_prefixes(&ensure_unified_headers(&strip_to_unified_diff(patch_text)));
 
-    // Validate headers exist at the start or within the first few lines
+    // Validate headers exist
     let has_old = patch_for_diffy.contains("\n--- ") || patch_for_diffy.starts_with("--- ");
     let has_new = patch_for_diffy.contains("\n+++ ") || patch_for_diffy.starts_with("+++ ");
     if !has_old || !has_new {
