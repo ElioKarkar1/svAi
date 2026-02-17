@@ -1671,13 +1671,15 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
           </button>
 
           <button
-            className={"activity__btn " + (activityTab === "ai" ? "is-active" : "")}
-            data-label="AI Assist"
-            aria-label="AI Assist"
+            className={"activity__btn " + (aiOpen ? "is-active" : "")}
+            data-label="AI Panel"
+            aria-label="AI Panel"
             onClick={() => {
-              setActivityTab("ai");
-              setAiOpen(true);
-              setBottomTab("ai");
+              setAiOpen((v) => !v);
+              if (!aiOpen) {
+                setActivityTab("ai");
+                setBottomTab("ai");
+              }
             }}
           >
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1875,8 +1877,14 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
           <button className={"bottomTab " + (bottomTab === "terminal" ? "is-active" : "")} onClick={() => setBottomTab("terminal")}>
             Terminal
           </button>
-          <button className={"bottomTab " + (bottomTab === "ai" ? "is-active" : "")} onClick={() => setBottomTab("ai")}>
-            AI Assist
+          <button
+            className={"bottomTab " + (aiOpen ? "is-active" : "")}
+            onClick={() => {
+              setBottomTab("ai");
+              setAiOpen((v) => !v);
+            }}
+          >
+            AI
           </button>
         </div>
         <div className="panel">
