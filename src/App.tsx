@@ -71,6 +71,21 @@ type ProjectNewResult = {
   rtl: string;
 };
 
+type AiRole = "system" | "user" | "assistant";
+
+type AiMessage = { role: AiRole; content: string };
+
+type AiProviderKind = "ollama" | "openai_compat";
+
+type AiProvider = {
+  kind: AiProviderKind;
+  base_url: string;
+  model: string;
+  api_key?: string;
+};
+
+type AiChatResult = { code: number; output: string };
+
 type SvlabConfig = {
   top: string;
   filelist: string;
@@ -83,6 +98,8 @@ type SvlabConfig = {
 };
 
 const LS_LAST_ROOT = "svai.lastRoot";
+const LS_AI_SETTINGS = "svai.ai.settings";
+const LS_AI_MESSAGES = "svai.ai.messages";
 const lsTopKey = (root: string) => `svai.top.${root}`;
 const lsExeKey = (root: string) => `svai.exe.${root}`;
 const lsWavesKey = (root: string) => `svai.waves.${root}`;
@@ -179,6 +196,17 @@ export default function App() {
   const [newProjectParent, setNewProjectParent] = useState<string>("");
   const [newProjectName, setNewProjectName] = useState<string>("svai-project");
   const [newProjectTop, setNewProjectTop] = useState<string>("top");
+
+  const [aiOpen, setAiOpen] = useState<boolean>(false);
+  const [aiIncludeProject, setAiIncludeProject] = useState<boolean>(true);
+  const [aiProvider, setAiProvider] = useState<AiProvider>({
+    kind: "ollama",
+    base_url: "http://localhost:11434",
+    model: "qwen2.5-coder:7b",
+    api_key: "",
+  });
+  const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
+  const [aiInput, setAiInput] = useState<string>("");
   const [psCreateRtl, setPsCreateRtl] = useState<boolean>(true);
   const [psCreateTb, setPsCreateTb] = useState<boolean>(true);
   const [psWriteFilelist, setPsWriteFilelist] = useState<boolean>(true);
@@ -238,6 +266,45 @@ export default function App() {
     if (toolsMenuRef.current) toolsMenuRef.current.open = false;
   };
 
+  // Load AI settings/messages (best-effort)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_AI_SETTINGS);
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s?.provider) setAiProvider((p) => ({ ...p, ...s.provider }));
+        if (typeof s?.includeProject === "boolean") setAiIncludeProject(!!s.includeProject);
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      const raw = localStorage.getItem(LS_AI_MESSAGES);
+      if (raw) {
+        const m = JSON.parse(raw);
+        if (Array.isArray(m)) setAiMessages(m as any);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_AI_SETTINGS, JSON.stringify({ provider: aiProvider, includeProject: aiIncludeProject }));
+    } catch {
+      // ignore
+    }
+  }, [aiProvider, aiIncludeProject]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_AI_MESSAGES, JSON.stringify(aiMessages.slice(-60)));
+    } catch {
+      // ignore
+    }
+  }, [aiMessages]);
+
   // Persist last active file + cursor (best-effort).
   useEffect(() => {
     if (!root) return;
@@ -254,6 +321,40 @@ export default function App() {
       // ignore
     }
   }, [root, activeRel, cursorLine, cursorCol]);
+
+  const aiSend = async (text: string) => {
+    const content = (text || "").trim();
+    if (!content) return;
+    if (!root) {
+      pushRun({ title: "AI", output: "Open a project first." });
+      return;
+    }
+
+    const nextMsgs: AiMessage[] = [...aiMessages, { role: "user", content }];
+    setAiMessages(nextMsgs);
+    setAiInput("");
+    setBusy(true);
+    setBottomTab("ai");
+    try {
+      const res = (await invoke("ai_chat", {
+        root,
+        provider: aiProvider,
+        messages: nextMsgs,
+        includeProject: aiIncludeProject,
+      })) as AiChatResult;
+
+      const reply = (res.output || "").trim() || "(no response)";
+      setAiMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+
+      if (res.code !== 0) {
+        pushRun({ title: "AI (error)", output: `AI provider returned ${res.code}\n\n${reply}` });
+      }
+    } catch (e: any) {
+      pushRun({ title: "AI (error)", output: String(e ?? "") });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const refreshToolchain = async () => {
     try {
@@ -1520,6 +1621,7 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
             aria-label="AI Assist"
             onClick={() => {
               setActivityTab("ai");
+              setAiOpen(true);
               setBottomTab("ai");
             }}
           >
@@ -1772,9 +1874,142 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
             </div>
           ) : null}
 
-          {bottomTab === "ai" ? <div className="muted">AI integration coming next (local Clawdbot-powered explain/fix).</div> : null}
+          {bottomTab === "ai" ? (
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+              <div className="muted">AI Assist is in the right sidebar.</div>
+              <button className="btn" onClick={() => setAiOpen(true)} disabled={busy}>
+                Open AI Panel
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
+
+      {aiOpen ? (
+        <div className="aiDock" onClick={(e) => e.stopPropagation()}>
+          <div className="aiDock__head">
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontWeight: 800 }}>AI</div>
+              <span className="pill">{aiProvider.kind === "ollama" ? "Local" : "API"}</span>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                className="btn"
+                onClick={() => {
+                  try {
+                    localStorage.removeItem(LS_AI_MESSAGES);
+                  } catch {}
+                  setAiMessages([]);
+                }}
+                disabled={busy}
+              >
+                Clear
+              </button>
+              <button className="btn" onClick={() => setAiOpen(false)} disabled={busy}>
+                Close
+              </button>
+            </div>
+          </div>
+
+          <div className="aiDock__settings">
+            <div className="menu__group" style={{ padding: 0 }}>
+              <div className="menu__label">Provider</div>
+              <select
+                className="menu__select"
+                value={aiProvider.kind}
+                onChange={(e) => setAiProvider((p) => ({ ...p, kind: e.target.value as any }))}
+                disabled={busy}
+              >
+                <option value="ollama">Local (Ollama)</option>
+                <option value="openai_compat">OpenAI-compatible</option>
+              </select>
+            </div>
+
+            <div className="menu__group" style={{ padding: 0 }}>
+              <div className="menu__label">Base URL</div>
+              <input
+                className="menu__select"
+                value={aiProvider.base_url}
+                onChange={(e) => setAiProvider((p) => ({ ...p, base_url: e.target.value }))}
+                disabled={busy}
+                placeholder={aiProvider.kind === "ollama" ? "http://localhost:11434" : "http://localhost:1234/v1"}
+              />
+            </div>
+
+            <div className="menu__group" style={{ padding: 0 }}>
+              <div className="menu__label">Model</div>
+              <input
+                className="menu__select"
+                value={aiProvider.model}
+                onChange={(e) => setAiProvider((p) => ({ ...p, model: e.target.value }))}
+                disabled={busy}
+                placeholder={aiProvider.kind === "ollama" ? "qwen2.5-coder:7b" : "model-name"}
+              />
+            </div>
+
+            {aiProvider.kind === "openai_compat" ? (
+              <div className="menu__group" style={{ padding: 0 }}>
+                <div className="menu__label">API key</div>
+                <input
+                  className="menu__select"
+                  type="password"
+                  value={aiProvider.api_key || ""}
+                  onChange={(e) => setAiProvider((p) => ({ ...p, api_key: e.target.value }))}
+                  disabled={busy}
+                  placeholder="(optional)"
+                />
+              </div>
+            ) : null}
+
+            <label className="check" style={{ marginTop: 6 }}>
+              <input
+                type="checkbox"
+                checked={aiIncludeProject}
+                onChange={(e) => setAiIncludeProject(e.target.checked)}
+                disabled={busy}
+              />
+              Include project context (whole project)
+            </label>
+            <div className="field__hint">svAi reads your project files locally and sends a capped context to the model.</div>
+          </div>
+
+          <div className="aiDock__messages">
+            {aiMessages.length === 0 ? (
+              <div className="muted">Ask for help, or paste an error log.</div>
+            ) : (
+              aiMessages.map((m, idx) => (
+                <div key={idx} className={"aiMsg aiMsg--" + m.role}>
+                  <div className="aiMsg__role">{m.role}</div>
+                  <div className="aiMsg__content">{m.content}</div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="aiDock__input">
+            <textarea
+              className="aiInput"
+              value={aiInput}
+              onChange={(e) => setAiInput(e.target.value)}
+              placeholder={root ? "Ask svAi…" : "Open a project first…"}
+              disabled={busy || !root}
+              rows={3}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  void aiSend(aiInput);
+                }
+              }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+              <div className="muted">Ctrl+Enter to send</div>
+              <button className="btn primary" onClick={() => void aiSend(aiInput)} disabled={busy || !root || !aiInput.trim()}>
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="statusbar">
         <div className="statusbar__left">

@@ -26,4 +26,5 @@ walkdir = "2.5.0"
 anyhow = "1.0.101"
 thiserror = "2.0.18"
 tauri-plugin-dialog = "2.6.0"
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls"] }
 

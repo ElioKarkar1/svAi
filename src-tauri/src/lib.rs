@@ -4,6 +4,8 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -1079,6 +1081,236 @@ fn project_new_create(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct AiMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AiProvider {
+    // "ollama" | "openai_compat"
+    kind: String,
+    base_url: String,
+    model: String,
+    #[serde(default)]
+    api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AiChatResult {
+    code: i32,
+    output: String,
+}
+
+fn gather_project_text(root: &Path, max_files: usize, max_chars: usize) -> Result<String, String> {
+    let cfg = load_or_init_config(root)?;
+
+    // Prefer filelist to avoid reading junk.
+    let mut rels: Vec<String> = vec![];
+    let fl = cfg.filelist.trim();
+    if !fl.is_empty() {
+        let flp = root.join(fl);
+        if flp.exists() {
+            rels = parse_filelist(root, fl);
+        }
+    }
+
+    // Fallback: scan.
+    if rels.is_empty() {
+        for ent in walkdir::WalkDir::new(root)
+            .follow_links(false)
+            .max_depth(10)
+            .into_iter()
+            .flatten()
+        {
+            if !ent.file_type().is_file() {
+                continue;
+            }
+            let p = ent.path();
+            if p.components().any(|c| {
+                let s = c.as_os_str().to_string_lossy().to_lowercase();
+                s == ".svlab" || s == "node_modules" || s == "dist" || s == "target" || s == ".git"
+            }) {
+                continue;
+            }
+            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+            if ext.eq_ignore_ascii_case("sv")
+                || ext.eq_ignore_ascii_case("svh")
+                || ext.eq_ignore_ascii_case("v")
+            {
+                if let Some(r) = relpath_from_root(root, p) {
+                    rels.push(r);
+                }
+            }
+        }
+        rels.sort();
+        rels.dedup();
+    }
+
+    let mut out = String::new();
+    out.push_str("# svAi Project Context\n\n");
+    out.push_str("## .svlab.json\n");
+    out.push_str(&serde_json::to_string_pretty(&cfg).unwrap_or_default());
+    out.push_str("\n\n");
+
+    let mut count = 0usize;
+    for rel in rels {
+        if count >= max_files {
+            break;
+        }
+        let p = root.join(&rel);
+        if !p.exists() {
+            continue;
+        }
+        let Ok(txt) = fs::read_to_string(&p) else {
+            continue;
+        };
+        // crude cap per file
+        if txt.len() > 120_000 {
+            continue;
+        }
+        let chunk = format!("\n\n## File: {}\n```systemverilog\n{}\n```\n", rel, txt);
+        if out.len() + chunk.len() > max_chars {
+            break;
+        }
+        out.push_str(&chunk);
+        count += 1;
+    }
+
+    Ok(out)
+}
+
+#[tauri::command]
+async fn ai_chat(
+    root: String,
+    provider: AiProvider,
+    messages: Vec<AiMessage>,
+    include_project: bool,
+) -> Result<AiChatResult, String> {
+    let rootp = PathBuf::from(&root);
+    let _canon = rootp
+        .canonicalize()
+        .map_err(|e| format!("Invalid root: {e}"))?;
+
+    let mut msgs = messages.clone();
+
+    if include_project {
+        let ctx = gather_project_text(&rootp, 80, 180_000)?;
+        // Prepend as a system message.
+        let sys = AiMessage {
+            role: "system".to_string(),
+            content: format!(
+                "You are svAi, an assistant for SystemVerilog projects. Use the provided project context to answer.\n\n{}",
+                ctx
+            ),
+        };
+        msgs.insert(0, sys);
+    }
+
+    let client = reqwest::Client::new();
+
+    let kind = provider.kind.trim().to_lowercase();
+    let base = provider.base_url.trim().trim_end_matches('/').to_string();
+    let model = provider.model.trim().to_string();
+
+    if kind == "ollama" {
+        let url = format!("{}/api/chat", base);
+        let body = serde_json::json!({
+            "model": model,
+            "stream": false,
+            "messages": msgs,
+        });
+
+        let resp = client
+            .post(url)
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("AI request failed: {e}"))?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Ok(AiChatResult {
+                code: status.as_u16() as i32,
+                output: text,
+            });
+        }
+
+        // Ollama response: { message: { role, content }, ... }
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        let content = v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        return Ok(AiChatResult {
+            code: 0,
+            output: content,
+        });
+    }
+
+    // OpenAI-compatible
+    let url = if base.ends_with("/v1") {
+        format!("{}/chat/completions", base)
+    } else {
+        format!("{}/v1/chat/completions", base)
+    };
+
+    let body = serde_json::json!({
+        "model": model,
+        "messages": msgs,
+        "temperature": 0.2,
+        "stream": false
+    });
+
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    if !provider.api_key.trim().is_empty() {
+        let hv = format!("Bearer {}", provider.api_key.trim());
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&hv).map_err(|_| "Bad API key".to_string())?,
+        );
+    }
+
+    let resp = client
+        .post(url)
+        .headers(headers)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("AI request failed: {e}"))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Ok(AiChatResult {
+            code: status.as_u16() as i32,
+            output: text,
+        });
+    }
+
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    let content = v
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c0| c0.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(AiChatResult {
+        code: 0,
+        output: content,
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LintResult {
     code: i32,
     output: String,
@@ -1643,6 +1875,7 @@ pub fn run() {
             project_setup_probe,
             project_setup_apply,
             project_new_create,
+            ai_chat,
             project_build,
             project_run,
             project_open_waves
