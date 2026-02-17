@@ -345,7 +345,74 @@ export default function App() {
     const fileMatch = patch.match(/^\+\+\+\s+([^\r\n]+)$/m);
     let file = (fileMatch?.[1] || "").trim();
     if (file.startsWith("b/")) file = file.slice(2);
+    if (file.startsWith("a/")) file = file.slice(2);
     return { patch, file };
+  };
+
+  const tryExtractCodeBlock = (s: string): string | null => {
+    // Prefer SV-ish fences, but fall back to any fenced block.
+    const ms = (s || "").match(/```(?:systemverilog|verilog|sv|v)?\s*([\s\S]*?)```/i);
+    if (!ms) return null;
+    const body = (ms[1] || "").replace(/\r\n/g, "\n").trim();
+    return body ? body : null;
+  };
+
+  const applyAssistantAsFullFile = async (assistantIndex: number) => {
+    if (!root) return;
+    const assistantText = aiMessages[assistantIndex]?.content || "";
+
+    // Determine target file: prefer diff headers; otherwise fall back to active tab.
+    const got = tryExtractDiffPatch(assistantText);
+    const targetRel = ((got?.file || activeTab?.relPath || "") as string).replace(/\\/g, "/");
+    if (!targetRel) {
+      pushRun({ title: "AI", output: "No target file (open a file or include a diff header)." });
+      return;
+    }
+
+    setBusy(true);
+    setBottomTab("terminal");
+    try {
+      // Ask AI to output the complete updated file.
+      const extra: AiMessage = {
+        role: "user",
+        content:
+          `For file ${targetRel}: output the COMPLETE updated file contents ONLY in a single fenced code block. ` +
+          `Do not output a diff. Do not add explanations.`,
+      };
+
+      const nextMsgs = [...aiMessages, extra];
+      setAiMessages(nextMsgs);
+
+      const res = (await invoke("ai_chat", {
+        root,
+        provider: aiProvider,
+        messages: nextMsgs,
+        includeProject: aiIncludeProject,
+      })) as AiChatResult;
+
+      const reply = (res.output || "").trim();
+      setAiMessages((prev) => [...prev, { role: "assistant", content: reply || "(no response)" }]);
+
+      const newFile = tryExtractCodeBlock(reply);
+      if (!newFile) {
+        pushRun({ title: "AI (error)", output: "AI did not return a fenced code block with full file contents." });
+        return;
+      }
+
+      await invoke("project_write_file", { root, relPath: targetRel, content: newFile });
+      pushRun({ title: "AI edit", output: `Updated: ${targetRel}` });
+
+      // Refresh tree + update open tab if present.
+      await refreshTree(root);
+      if (openTabs.find((t) => t.relPath === targetRel)) {
+        setOpenTabs((prev) => prev.map((t) => (t.relPath === targetRel ? { ...t, value: newFile, dirty: false } : t)));
+      }
+      setActiveRel(targetRel);
+    } catch (e: any) {
+      pushRun({ title: "AI edit (error)", output: String(e ?? "") });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const openPatchPreviewFromAssistant = (assistantText: string) => {
@@ -2145,9 +2212,12 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
                     <div className="aiMsg__role">{m.role}</div>
                     <div className="aiMsg__content">{m.content}</div>
                     {patch ? (
-                      <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
+                      <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                         <button className="btn" onClick={() => openPatchPreviewFromAssistant(m.content)} disabled={busy}>
                           Preview patch
+                        </button>
+                        <button className="btn primary" onClick={() => void applyAssistantAsFullFile(idx)} disabled={busy || !root}>
+                          Apply (full file)
                         </button>
                       </div>
                     ) : null}
