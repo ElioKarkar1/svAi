@@ -1122,18 +1122,35 @@ export default function App() {
     }
   };
 
-  const saveActive = async () => {
-    if (!root || !activeTab) return;
-    setBusy(true);
+  const saveTabByRel = async (relPath: string) => {
+    if (!root) return;
+    const p = (relPath || "").replace(/\\/g, "/");
+    const t = openTabs.find((x) => x.relPath === p);
+    if (!t) {
+      pushRun({ title: "Save", output: `Not open: ${p}` });
+      return;
+    }
+    if (!t.dirty) {
+      pushRun({ title: "Save", output: `No changes: ${p}` });
+      return;
+    }
     try {
-      await invoke("project_write_file", { root, relPath: activeTab.relPath, content: activeTab.value });
-      setOpenTabs((prev) => prev.map((t) => (t.relPath === activeTab.relPath ? { ...t, dirty: false } : t)));
-      pushRun({ title: "Save", output: `Saved: ${activeTab.relPath}` });
+      setBusy(true);
+      setPhase("saving");
+      await invoke("project_write_file", { root, relPath: p, content: t.value });
+      setOpenTabs((prev) => prev.map((x) => (x.relPath === p ? { ...x, dirty: false } : x)));
+      pushRun({ title: "Save", output: `Saved ${p}` });
     } catch (e: any) {
-      pushRun({ title: "Save (error)", output: `Save failed: ${String(e ?? "")}` });
+      pushRun({ title: "Save (error)", output: String(e ?? "") });
     } finally {
+      setPhase("idle");
       setBusy(false);
     }
+  };
+
+  const saveActive = async () => {
+    if (!root || !activeTab) return;
+    await saveTabByRel(activeTab.relPath);
   };
 
   const saveAllDirty = async () => {
@@ -2433,9 +2450,11 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
               <div style={{ marginTop: 10 }}>
                 <div className="menu__label">Last apply</div>
                 <div className="muted" style={{ fontSize: 12 }}>{aiApplyStatus}</div>
-                <details style={{ marginTop: 6 }}>
+                <details className="aiDetails" style={{ marginTop: 6 }}>
                   <summary className="btn" style={{ display: "inline-block" }}>Details ▾</summary>
-                  <pre className="terminal__body" style={{ marginTop: 8, maxHeight: 160, overflow: "auto" }}>{aiApplyDetails || "(no details)"}</pre>
+                  <div className="aiDetails__panel">
+                    <pre className="terminal__body" style={{ margin: 0, maxHeight: 160, overflow: "auto" }}>{aiApplyDetails || "(no details)"}</pre>
+                  </div>
                 </details>
               </div>
             ) : null}
@@ -2533,6 +2552,18 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
             disabled={ctxMenu.isDir}
           >
             Open
+          </button>
+
+          <button
+            className="ctx__item"
+            onClick={() => {
+              const p = ctxMenu.path;
+              setCtxMenu(null);
+              void saveTabByRel(p);
+            }}
+            disabled={ctxMenu.isDir}
+          >
+            Save
           </button>
 
           <div className="ctx__sep" />
