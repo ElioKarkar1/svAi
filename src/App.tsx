@@ -237,6 +237,7 @@ export default function App() {
   const editorRef = useRef<any>(null);
   // const _aiInlineRef = useRef<{ file: string; line: number; after: string } | null>(null);
   const buildMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const filesMenuRef = useRef<HTMLDetailsElement | null>(null);
   const projectMenuRef = useRef<HTMLDetailsElement | null>(null);
   const toolsMenuRef = useRef<HTMLDetailsElement | null>(null);
 
@@ -282,6 +283,7 @@ export default function App() {
 
   const closeMenus = () => {
     if (buildMenuRef.current) buildMenuRef.current.open = false;
+    if (filesMenuRef.current) filesMenuRef.current.open = false;
     if (projectMenuRef.current) projectMenuRef.current.open = false;
     if (toolsMenuRef.current) toolsMenuRef.current.open = false;
   };
@@ -362,6 +364,11 @@ export default function App() {
     if (!ms) return null;
     const body = (ms[1] || "").replace(/\r\n/g, "\n").trim();
     return body ? body : null;
+  };
+
+  const ensureTrailingNewline = (text: string): string => {
+    const t = (text ?? "").replace(/\r\n/g, "\n");
+    return t.endsWith("\n") ? t : t + "\n";
   };
 
   const looksLikeDiff = (text: string): boolean => {
@@ -525,11 +532,12 @@ export default function App() {
   const createFileFromAssistant = async (assistantIndex: number) => {
     if (!root) return;
     const assistantText = aiMessages[assistantIndex]?.content || "";
-    const code = tryExtractCodeBlock(assistantText);
+    let code = tryExtractCodeBlock(assistantText);
     if (!code) {
       pushRun({ title: "AI", output: "No code block found to create a file from." });
       return;
     }
+    code = ensureTrailingNewline(code);
     if (looksLikeDiff(code)) {
       pushRun({ title: "AI", output: "That message looks like a diff. Use Apply instead." });
       return;
@@ -595,11 +603,12 @@ export default function App() {
       setBottomTab("terminal");
       try {
         if (op === "create_file") {
-          const content = ((obj as any).content || "").toString();
+          let content = ((obj as any).content || "").toString();
           if (!content.trim()) {
             pushRun({ title: "AI (error)", output: "AI create_file missing content." });
             return;
           }
+          content = ensureTrailingNewline(content);
 
           const exists = (await invoke("project_exists", { root, relPath: file })) as boolean;
           let finalPath = file;
@@ -674,11 +683,12 @@ export default function App() {
         const exists = (await invoke("project_exists", { root, relPath: targetRel })) as boolean;
         const looksLikeNewFile = /^@@\s*-0,0\s*\+\d+(?:,\d+)?\s*@@/m.test(got.patch) || /\bnew file mode\b/m.test(got.patch);
         if (!exists && looksLikeNewFile) {
-          const content = stripLeadingDiffMarkers(got.patch);
+          let content = stripLeadingDiffMarkers(got.patch);
           if (!content.trim()) {
             pushRun({ title: "AI", output: "Diff looked like a new file, but no content was extracted." });
             return;
           }
+          content = ensureTrailingNewline(content);
           setBusy(true);
           setBottomTab("terminal");
           await invoke("project_write_file", { root, relPath: targetRel, content });
@@ -1542,6 +1552,54 @@ export default function App() {
                 disabled={busy || !root || !toolchain?.ok || !toolchain?.make_ok}
               >
                 Clean Build
+              </button>
+            </div>
+          </details>
+
+          <details className="menu" ref={filesMenuRef}>
+            <summary className="btn">Files ▾</summary>
+            <div className="menu__panel">
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  void saveActive();
+                }}
+                disabled={busy || !activeTab || !activeTab.dirty}
+              >
+                Save
+              </button>
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  void saveAllDirty();
+                }}
+                disabled={busy || !root || openTabs.filter((t) => t.dirty).length === 0}
+              >
+                Save All
+              </button>
+              <div className="ctx__sep" />
+              <button
+                className="menu__item"
+                onClick={() => {
+                  const name = window.prompt("New file name (relative)", "rtl/new.sv");
+                  if (!name) return;
+                  closeMenus();
+                  void (async () => {
+                    try {
+                      await invoke("project_create_file", { root, relPath: name });
+                      pushRun({ title: "Create file", output: `Created ${name}` });
+                      await refreshTree(root);
+                      await openFile(name);
+                    } catch (e: any) {
+                      pushRun({ title: "Create file (error)", output: String(e ?? "") });
+                    }
+                  })();
+                }}
+                disabled={busy || !root}
+              >
+                New File…
               </button>
             </div>
           </details>
