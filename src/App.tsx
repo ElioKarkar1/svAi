@@ -88,7 +88,9 @@ type AiChatResult = { code: number; output: string };
 
 type AiFileOp =
   | { op: "create_file"; file: string; content: string }
-  | { op: "edit"; file: string; find: string; replace: string };
+  | { op: "write_file"; file: string; content: string }
+  | { op: "edit"; file: string; find: string; replace: string }
+  | { op: "apply_diff"; file: string; patch: string };
 
 // type PatchApplyResult removed (patch flow disabled)
 
@@ -218,6 +220,12 @@ export default function App() {
 
   const [aiApplyStatus, setAiApplyStatus] = useState<string>("");
   const [aiApplyDetails, setAiApplyDetails] = useState<string>("");
+
+  const [aiReviewOpen, setAiReviewOpen] = useState<boolean>(false);
+  const [aiReviewOps, setAiReviewOps] = useState<AiFileOp[]>([]);
+  const [aiReviewChecks, setAiReviewChecks] = useState<Record<number, boolean>>({});
+  const [aiReviewPreview, setAiReviewPreview] = useState<Record<number, string>>({});
+  const [aiReviewTitle, setAiReviewTitle] = useState<string>("");
 
   // Patch preview/apply flow disabled for now; using full-file apply for reliability.
   const [_aiPatchOpen, _setAiPatchOpen] = useState<boolean>(false);
@@ -358,6 +366,38 @@ export default function App() {
     return { patch, file };
   };
 
+  const splitUnifiedDiffByFile = (patch: string): { file: string; patch: string }[] => {
+    const text = (patch || "").replace(/\r\n/g, "\n");
+    const lines = text.split("\n");
+    const out: { file: string; patch: string }[] = [];
+
+    let start = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith("--- ")) {
+        if (start !== -1) {
+          const chunk = lines.slice(start, i).join("\n").trim();
+          const fm = chunk.match(/^\+\+\+\s+([^\n]+)$/m);
+          let file = (fm?.[1] || "").trim();
+          if (file.startsWith("b/")) file = file.slice(2);
+          if (file.startsWith("a/")) file = file.slice(2);
+          if (chunk && file) out.push({ file, patch: chunk });
+        }
+        start = i;
+      }
+    }
+
+    if (start !== -1) {
+      const chunk = lines.slice(start).join("\n").trim();
+      const fm = chunk.match(/^\+\+\+\s+([^\n]+)$/m);
+      let file = (fm?.[1] || "").trim();
+      if (file.startsWith("b/")) file = file.slice(2);
+      if (file.startsWith("a/")) file = file.slice(2);
+      if (chunk && file) out.push({ file, patch: chunk });
+    }
+
+    return out.length ? out : [];
+  };
+
   const tryExtractCodeBlock = (s: string): string | null => {
     // Prefer SV-ish fences, but fall back to any fenced block.
     const ms = (s || "").match(/```(?:systemverilog|verilog|sv|v)?\s*([\s\S]*?)```/i);
@@ -448,16 +488,29 @@ export default function App() {
     setActiveRel(targetRel);
   };
 
-  const tryParseJsonObject = (s: string): any | null => {
+  const tryParseJsonAny = (s: string): any | null => {
     const raw = (s || "").trim();
     // Try fenced json first
     const fenced = raw.match(/```json\s*([\s\S]*?)```/i);
     const candidate = (fenced?.[1] || raw).trim();
     try {
-      const v = JSON.parse(candidate);
-      if (v && typeof v === "object") return v;
+      return JSON.parse(candidate);
     } catch {
       // ignore
+    }
+    return null;
+  };
+
+  const extractAiOps = (v: any): AiFileOp[] | null => {
+    if (!v) return null;
+    if (Array.isArray(v)) {
+      return v.filter((x) => x && typeof x === "object" && typeof x.op === "string") as AiFileOp[];
+    }
+    if (typeof v === "object") {
+      if (Array.isArray((v as any).ops)) {
+        return (v as any).ops.filter((x: any) => x && typeof x === "object" && typeof x.op === "string") as AiFileOp[];
+      }
+      if (typeof (v as any).op === "string") return [v as AiFileOp];
     }
     return null;
   };
@@ -584,35 +637,102 @@ export default function App() {
     }
   };
 
-  const applyAssistantAuto = async (assistantIndex: number) => {
+  const openAiReview = async (title: string, ops: AiFileOp[]) => {
+    setAiReviewTitle(title);
+    setAiReviewOps(ops);
+    const checks: Record<number, boolean> = {};
+    ops.forEach((_, i) => (checks[i] = true));
+    setAiReviewChecks(checks);
+    setAiReviewPreview({});
+    setAiReviewOpen(true);
+
+    // Build previews best-effort.
     if (!root) return;
-
-    const assistantText = aiMessages[assistantIndex]?.content || "";
-    const obj = tryParseJsonObject(assistantText) as AiFileOp | null;
-
-    // If the assistant provided a file op JSON, handle it.
-    if (obj && typeof obj === "object" && typeof (obj as any).op === "string") {
-      const op = (obj as any).op;
-      const file = ((obj as any).file || "").toString().replace(/\\/g, "/");
-      if (!file || isBlockedRelPath(file)) {
-        pushRun({ title: "AI (error)", output: "AI returned an invalid/blocked file path." });
-        return;
-      }
-
-      setBusy(true);
-      setBottomTab("terminal");
+    const previews: Record<number, string> = {};
+    for (let i = 0; i < ops.length; i++) {
+      const op = ops[i] as any;
+      const file = (op.file || "").toString().replace(/\\/g, "/");
       try {
-        if (op === "create_file") {
-          let content = ((obj as any).content || "").toString();
-          if (!content.trim()) {
-            pushRun({ title: "AI (error)", output: "AI create_file missing content." });
-            return;
+        if (op.op === "apply_diff") {
+          const exists = (await invoke("project_exists", { root, relPath: file })) as boolean;
+          if (exists) {
+            const prev = (await invoke("project_patch_preview", { root, patch: op.patch })) as any;
+            previews[i] = `Patch preview (${prev.file}:${prev.start_line})\n\n${prev.after}`;
+          } else {
+            const created = ensureTrailingNewline(stripLeadingDiffMarkers(op.patch || ""));
+            previews[i] = `Will create: ${file}\n\n${created}`;
           }
+        } else if (op.op === "edit") {
+          const cur = (await invoke("project_read_file", { root, relPath: file })) as string;
+          const find = (op.find || "").toString();
+          const replace = (op.replace || "").toString();
+          const hits = find ? cur.split(find).length - 1 : 0;
+          previews[i] = `Edit ${file}\nfind hits: ${hits}\n\n--- find ---\n${find}\n\n--- replace ---\n${replace}`;
+        } else if (op.op === "create_file" || op.op === "write_file") {
+          const exists = (await invoke("project_exists", { root, relPath: file })) as boolean;
+          const content = ensureTrailingNewline((op.content || "").toString());
+          previews[i] = `${op.op === "create_file" ? "Create" : "Write"} ${file}${exists ? " (overwrites)" : ""}\n\n${content}`;
+        }
+      } catch (e: any) {
+        previews[i] = `Preview error: ${String(e?.message ?? e ?? "")}`;
+      }
+    }
+    setAiReviewPreview(previews);
+  };
+
+  const applyAiOps = async () => {
+    if (!root) return;
+    const selected = aiReviewOps
+      .map((op, i) => ({ op, i }))
+      .filter(({ i }) => aiReviewChecks[i]);
+    if (selected.length === 0) {
+      setAiReviewOpen(false);
+      return;
+    }
+
+    setBusy(true);
+    setBottomTab("terminal");
+    try {
+      for (const { op, i } of selected) {
+        const anyOp: any = op as any;
+        const file = (anyOp.file || "").toString().replace(/\\/g, "/");
+        if (!file || isBlockedRelPath(file)) throw new Error(`Invalid/blocked path: ${file}`);
+
+        if (anyOp.op === "apply_diff") {
+          const exists = (await invoke("project_exists", { root, relPath: file })) as boolean;
+          if (exists) {
+            await invoke("project_apply_patch", { root, patch: anyOp.patch });
+            pushRun({ title: "AI", output: `Patched: ${file}` });
+          } else {
+            let content = stripLeadingDiffMarkers(anyOp.patch || "");
+            content = ensureTrailingNewline(content);
+            await invoke("project_write_file", { root, relPath: file, content });
+            await maybeUpdateFilelist(file);
+            pushRun({ title: "AI", output: `Created: ${file}` });
+          }
+          continue;
+        }
+
+        if (anyOp.op === "edit") {
+          const current = (await invoke("project_read_file", { root, relPath: file })) as string;
+          const find = (anyOp.find || "").toString();
+          const replace = (anyOp.replace || "").toString();
+          const hits = find ? current.split(find).length - 1 : 0;
+          if (hits !== 1) throw new Error(`Edit did not apply cleanly (find hits=${hits}) in ${file}`);
+          const updated = current.replace(find, replace);
+          await invoke("project_write_file", { root, relPath: file, content: updated });
+          pushRun({ title: "AI", output: `Patched: ${file}` });
+          continue;
+        }
+
+        if (anyOp.op === "create_file" || anyOp.op === "write_file") {
+          let content = (anyOp.content || "").toString();
+          if (!content.trim()) throw new Error(`Missing content for ${file}`);
           content = ensureTrailingNewline(content);
 
           const exists = (await invoke("project_exists", { root, relPath: file })) as boolean;
           let finalPath = file;
-          if (exists) {
+          if (exists && anyOp.op === "create_file") {
             const okOverwrite = window.confirm(`File already exists: ${file}\n\nOK = overwrite\nCancel = create copy with suffix`);
             if (!okOverwrite) {
               let k = 2;
@@ -630,80 +750,54 @@ export default function App() {
 
           await invoke("project_write_file", { root, relPath: finalPath, content });
           await maybeUpdateFilelist(finalPath);
-          pushRun({ title: "AI", output: `Created: ${finalPath}` });
-          await refreshTree(root);
-          await openFile(finalPath);
-          return;
+          pushRun({ title: "AI", output: `${exists ? "Wrote" : "Created"}: ${finalPath}` });
+          continue;
         }
 
-        if (op === "edit") {
-          // Use existing patch logic for edits
-          const targetRel = file;
-          const current = (await invoke("project_read_file", { root, relPath: targetRel })) as string;
-          const find = ((obj as any).find || "").toString();
-          const replace = ((obj as any).replace || "").toString();
-          const hits = find ? current.split(find).length - 1 : 0;
-          if (hits === 1) {
-            const updated = current.replace(find, replace);
-            await invoke("project_write_file", { root, relPath: targetRel, content: updated });
-            pushRun({ title: "AI", output: `Patched: ${targetRel}` });
-            await refreshTree(root);
-            if (openTabs.find((t) => t.relPath === targetRel)) {
-              setOpenTabs((prev) => prev.map((t) => (t.relPath === targetRel ? { ...t, value: updated, dirty: false } : t)));
-            }
-            setActiveRel(targetRel);
-            return;
-          }
-
-          pushRun({ title: "AI", output: "Edit JSON did not apply cleanly (find must match exactly once)." });
-          return;
-        }
-
-        pushRun({ title: "AI (error)", output: `Unknown op: ${op}` });
-      } catch (e: any) {
-        pushRun({ title: "AI (error)", output: String(e?.message ?? e ?? "") });
-      } finally {
-        setBusy(false);
+        pushRun({ title: "AI", output: `Skipped unknown op at index ${i}` });
       }
 
+      await refreshTree(root);
+    } catch (e: any) {
+      pushRun({ title: "AI (error)", output: String(e?.message ?? e ?? "") });
+    } finally {
+      setBusy(false);
+      setAiReviewOpen(false);
+    }
+  };
+
+  const applyAssistantAuto = async (assistantIndex: number) => {
+    if (!root) return;
+
+    const assistantText = aiMessages[assistantIndex]?.content || "";
+
+    // JSON ops (preferred for multi-file changes)
+    const parsed = tryParseJsonAny(assistantText);
+    const opsFromJson = extractAiOps(parsed);
+    if (opsFromJson && opsFromJson.length) {
+      await openAiReview(`AI ops (${opsFromJson.length})`, opsFromJson);
       return;
     }
 
-    // Otherwise: existing auto-apply flow (ask for JSON patch against active file / diff target)
+    // Otherwise: diff apply flow (open a preview/review first)
     const got = tryExtractDiffPatch(assistantText);
+    if (got?.patch) {
+      const chunks = splitUnifiedDiffByFile(got.patch);
+      const ops: AiFileOp[] = (chunks.length ? chunks : [{ file: got.file, patch: got.patch }]).map((c) => ({
+        op: "apply_diff",
+        file: (c.file || "").replace(/\\/g, "/"),
+        patch: c.patch,
+      }));
+      if (ops.length) {
+        await openAiReview(`Diff (${ops.length} file${ops.length === 1 ? "" : "s"})`, ops);
+        return;
+      }
+    }
+
     const targetRel = ((got?.file || activeTab?.relPath || "") as string).replace(/\\/g, "/");
     if (!targetRel) {
       pushRun({ title: "AI", output: "No target file (open a file first)." });
       return;
-    }
-
-    // If the assistant provided a "new file" diff and the file doesn't exist, create it.
-    if (got?.patch && got.file) {
-      try {
-        const exists = (await invoke("project_exists", { root, relPath: targetRel })) as boolean;
-        const looksLikeNewFile = /^@@\s*-0,0\s*\+\d+(?:,\d+)?\s*@@/m.test(got.patch) || /\bnew file mode\b/m.test(got.patch);
-        if (!exists && looksLikeNewFile) {
-          let content = stripLeadingDiffMarkers(got.patch);
-          if (!content.trim()) {
-            pushRun({ title: "AI", output: "Diff looked like a new file, but no content was extracted." });
-            return;
-          }
-          content = ensureTrailingNewline(content);
-          setBusy(true);
-          setBottomTab("terminal");
-          await invoke("project_write_file", { root, relPath: targetRel, content });
-          await maybeUpdateFilelist(targetRel);
-          pushRun({ title: "AI", output: `Created: ${targetRel}` });
-          await refreshTree(root);
-          await openFile(targetRel);
-          setAiApplyStatus(`Created: ${targetRel}`);
-          setAiMessages((prev) => [...prev, { role: "assistant", content: `Created ${targetRel}.` }]);
-          return;
-        }
-      } catch (e: any) {
-        // Fall through to normal apply, but log the create attempt error.
-        pushRun({ title: "AI", output: `Create-from-diff skipped: ${String(e?.message ?? e ?? "")}` });
-      }
     }
 
     setBusy(true);
@@ -735,7 +829,7 @@ export default function App() {
       const reply = (res.output || "").trim();
       setAiApplyDetails(reply);
 
-      const obj = tryParseJsonObject(reply);
+      const obj = tryParseJsonAny(reply);
       const find = (obj?.find || "").toString();
       const replace = (obj?.replace || "").toString();
 
@@ -1601,6 +1695,56 @@ export default function App() {
               >
                 New File…
               </button>
+
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  void (async () => {
+                    if (!root) return;
+                    const guess = (() => {
+                      const txt = activeTab?.value || "";
+                      const m = txt.match(/\bmodule\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
+                      return (m?.[1] || "").trim() || "top";
+                    })();
+                    const dut = (window.prompt("DUT module name", guess) || "").trim();
+                    if (!dut) return;
+                    const tbName = `tb_${dut}`;
+                    const rel = `tb/${tbName}.sv`;
+                    const template = ensureTrailingNewline(
+                      `\`timescale 1ns/1ps\n\nmodule ${tbName}();\n  // TODO: declare signals + instantiate DUT (${dut})\n\n  logic clk = 0;\n  always #5 clk = ~clk;\n\n  initial begin\n    $display(\"svAi: TODO write stimulus\");\n    #100;\n    $finish;\n  end\nendmodule\n`
+                    );
+
+                    const exists = (await invoke("project_exists", { root, relPath: rel })) as boolean;
+                    let finalPath = rel;
+                    if (exists) {
+                      const okOverwrite = window.confirm(`File already exists: ${rel}\n\nOK = overwrite\nCancel = create copy with suffix`);
+                      if (!okOverwrite) {
+                        let k = 2;
+                        while (k < 50) {
+                          const cand = nextSuffixPath(rel, k);
+                          const candExists = (await invoke("project_exists", { root, relPath: cand })) as boolean;
+                          if (!candExists) {
+                            finalPath = cand;
+                            break;
+                          }
+                          k += 1;
+                        }
+                      }
+                    }
+
+                    await invoke("project_write_file", { root, relPath: finalPath, content: template });
+                    await maybeUpdateFilelist(finalPath);
+                    await invoke("project_set_top", { root, top: tbName });
+                    pushRun({ title: "Testbench", output: `Created ${finalPath} (top=${tbName})` });
+                    await refreshTree(root);
+                    await openFile(finalPath);
+                  })();
+                }}
+                disabled={busy || !root}
+              >
+                Create Testbench…
+              </button>
             </div>
           </details>
 
@@ -2395,6 +2539,52 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
         </div>
       </div>
 
+      {aiReviewOpen ? (
+        <div
+          className="ctx"
+          style={{ left: "50%", top: 70, width: 760, maxWidth: "calc(100vw - 80px)", transform: "translateX(-50%)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px" }}>
+            <div style={{ fontWeight: 800 }}>{aiReviewTitle || "Review changes"}</div>
+            <button className="btn" onClick={() => setAiReviewOpen(false)} disabled={busy}>
+              Close
+            </button>
+          </div>
+          <div className="ctx__sep" />
+          <div style={{ padding: 10, display: "grid", gap: 10 }}>
+            {aiReviewOps.map((op, idx) => (
+              <div key={idx} style={{ border: "1px solid rgba(255,255,255,0.10)", borderRadius: 12, padding: 10 }}>
+                <label className="check" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={aiReviewChecks[idx] ?? true}
+                    onChange={(e) => setAiReviewChecks((prev) => ({ ...prev, [idx]: e.target.checked }))}
+                    disabled={busy}
+                  />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12 }}>{(op as any).op} · {(op as any).file}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>{aiReviewPreview[idx] ? "Preview ready" : "(building preview…)"}</div>
+                  </div>
+                </label>
+                {aiReviewPreview[idx] ? (
+                  <pre className="terminal__body" style={{ marginTop: 8, maxHeight: 180, overflow: "auto" }}>{aiReviewPreview[idx]}</pre>
+                ) : null}
+              </div>
+            ))}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn" onClick={() => setAiReviewOpen(false)} disabled={busy}>
+                Cancel
+              </button>
+              <button className="btn primary" onClick={() => void applyAiOps()} disabled={busy}>
+                Apply selected
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className={"aiDock" + (aiOpen ? " is-open" : "")} onClick={(e) => e.stopPropagation()}>
           <div className="aiDock__head">
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2516,7 +2706,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                     {patch ? (
                       <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                         <button className="btn primary" onClick={() => void applyAssistantAuto(idx)} disabled={busy || !root}>
-                          Apply
+                          Review + Apply…
                         </button>
                       </div>
                     ) : null}
