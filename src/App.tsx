@@ -360,10 +360,14 @@ export default function App() {
 
     if (root && normalizedFile && isOpen) {
       // Inline preview when file is open
+      // Ensure the target file tab is active so the inline bubble is visible.
+      setActiveRel(normalizedFile);
+
       void (async () => {
         try {
           const prev = (await invoke("project_patch_preview", { root, patch: got.patch })) as PatchPreviewResult;
           if (!prev.ok) {
+            setBottomTab("terminal");
             pushRun({ title: "Patch preview (error)", output: prev.message || "preview failed" });
             return;
           }
@@ -387,6 +391,7 @@ export default function App() {
             }
           }, 60);
         } catch (e: any) {
+          setBottomTab("terminal");
           pushRun({ title: "Patch preview (error)", output: String(e ?? "") });
         }
       })();
