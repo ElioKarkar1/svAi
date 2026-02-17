@@ -627,6 +627,33 @@ export default function App() {
       return;
     }
 
+    // If the assistant provided a "new file" diff and the file doesn't exist, create it.
+    if (got?.patch && got.file) {
+      try {
+        const exists = (await invoke("project_exists", { root, relPath: targetRel })) as boolean;
+        const looksLikeNewFile = /^@@\s*-0,0\s*\+\d+(?:,\d+)?\s*@@/m.test(got.patch) || /\bnew file mode\b/m.test(got.patch);
+        if (!exists && looksLikeNewFile) {
+          const content = stripLeadingDiffMarkers(got.patch);
+          if (!content.trim()) {
+            pushRun({ title: "AI", output: "Diff looked like a new file, but no content was extracted." });
+            return;
+          }
+          setBusy(true);
+          setBottomTab("terminal");
+          await invoke("project_write_file", { root, relPath: targetRel, content });
+          pushRun({ title: "AI", output: `Created: ${targetRel}` });
+          await refreshTree(root);
+          await openFile(targetRel);
+          setAiApplyStatus(`Created: ${targetRel}`);
+          setAiMessages((prev) => [...prev, { role: "assistant", content: `Created ${targetRel}.` }]);
+          return;
+        }
+      } catch (e: any) {
+        // Fall through to normal apply, but log the create attempt error.
+        pushRun({ title: "AI", output: `Create-from-diff skipped: ${String(e?.message ?? e ?? "")}` });
+      }
+    }
+
     setBusy(true);
     setBottomTab("terminal");
     try {
@@ -2402,6 +2429,15 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                 );
               })
             )}
+
+            {busy ? (
+              <div className="aiMsg aiMsg--assistant aiMsg--thinking">
+                <div className="aiMsg__role">assistant</div>
+                <div className="aiMsg__content">
+                  Thinking<span className="dots" />
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="aiDock__input">
