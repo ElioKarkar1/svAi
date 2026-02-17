@@ -306,26 +306,24 @@ button, input, textarea {
   opacity: 0.85;
 }
 
-.aiDetails {
-  position: relative;
+.aiDock__settings {
+  border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 
-.aiDetails__panel {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 50;
-  width: min(520px, 90vw);
-  max-width: 100%;
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 10px;
-  background: rgba(20,20,20,0.98);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
-  padding: 8px;
+.aiDock__settingsSummary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 12px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.8);
 }
 
-.aiDetails:not([open]) .aiDetails__panel {
+.aiDock__settingsSummary::-webkit-details-marker {
   display: none;
+}
+
+.aiDock__settingsPanel {
+  padding: 0 12px 12px 12px;
 }
 
 .dots::after {

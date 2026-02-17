@@ -2385,80 +2385,79 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
             </div>
           </div>
 
-          <div className="aiDock__settings">
-            <div className="menu__group" style={{ padding: 0 }}>
-              <div className="menu__label">Provider</div>
-              <select
-                className="menu__select"
-                value={aiProvider.kind}
-                onChange={(e) => setAiProvider((p) => ({ ...p, kind: e.target.value as any }))}
-                disabled={busy}
-              >
-                <option value="ollama">Local (Ollama)</option>
-                <option value="openai_compat">OpenAI-compatible</option>
-              </select>
-            </div>
-
-            <div className="menu__group" style={{ padding: 0 }}>
-              <div className="menu__label">Base URL</div>
-              <input
-                className="menu__select"
-                value={aiProvider.base_url}
-                onChange={(e) => setAiProvider((p) => ({ ...p, base_url: e.target.value }))}
-                disabled={busy}
-                placeholder={aiProvider.kind === "ollama" ? "http://localhost:11434" : "http://localhost:1234/v1"}
-              />
-            </div>
-
-            <div className="menu__group" style={{ padding: 0 }}>
-              <div className="menu__label">Model</div>
-              <input
-                className="menu__select"
-                value={aiProvider.model}
-                onChange={(e) => setAiProvider((p) => ({ ...p, model: e.target.value }))}
-                disabled={busy}
-                placeholder={aiProvider.kind === "ollama" ? "qwen2.5-coder:7b" : "model-name"}
-              />
-            </div>
-
-            {aiProvider.kind === "openai_compat" ? (
+          <details className="aiDock__settings">
+            <summary className="aiDock__settingsSummary">Settings</summary>
+            <div className="aiDock__settingsPanel">
               <div className="menu__group" style={{ padding: 0 }}>
-                <div className="menu__label">API key</div>
+                <div className="menu__label">Provider</div>
+                <select
+                  className="menu__select"
+                  value={aiProvider.kind}
+                  onChange={(e) => setAiProvider((p) => ({ ...p, kind: e.target.value as any }))}
+                  disabled={busy}
+                >
+                  <option value="ollama">Local (Ollama)</option>
+                  <option value="openai_compat">OpenAI-compatible</option>
+                </select>
+              </div>
+
+              <div className="menu__group" style={{ padding: 0 }}>
+                <div className="menu__label">Base URL</div>
                 <input
                   className="menu__select"
-                  type="password"
-                  value={aiProvider.api_key || ""}
-                  onChange={(e) => setAiProvider((p) => ({ ...p, api_key: e.target.value }))}
+                  value={aiProvider.base_url}
+                  onChange={(e) => setAiProvider((p) => ({ ...p, base_url: e.target.value }))}
                   disabled={busy}
-                  placeholder="(optional)"
+                  placeholder={aiProvider.kind === "ollama" ? "http://localhost:11434" : "http://localhost:1234/v1"}
                 />
               </div>
-            ) : null}
 
-            <label className="check" style={{ marginTop: 6 }}>
-              <input
-                type="checkbox"
-                checked={aiIncludeProject}
-                onChange={(e) => setAiIncludeProject(e.target.checked)}
-                disabled={busy}
-              />
-              Include project context (whole project)
-            </label>
-            <div className="field__hint">svAi reads your project files locally and sends a capped context to the model.</div>
-
-            {aiApplyStatus ? (
-              <div style={{ marginTop: 10 }}>
-                <div className="menu__label">Last apply</div>
-                <div className="muted" style={{ fontSize: 12 }}>{aiApplyStatus}</div>
-                <details className="aiDetails" style={{ marginTop: 6 }}>
-                  <summary className="btn" style={{ display: "inline-block" }}>Details ▾</summary>
-                  <div className="aiDetails__panel">
-                    <pre className="terminal__body" style={{ margin: 0, maxHeight: 160, overflow: "auto" }}>{aiApplyDetails || "(no details)"}</pre>
-                  </div>
-                </details>
+              <div className="menu__group" style={{ padding: 0 }}>
+                <div className="menu__label">Model</div>
+                <input
+                  className="menu__select"
+                  value={aiProvider.model}
+                  onChange={(e) => setAiProvider((p) => ({ ...p, model: e.target.value }))}
+                  disabled={busy}
+                  placeholder={aiProvider.kind === "ollama" ? "qwen2.5-coder:7b" : "model-name"}
+                />
               </div>
-            ) : null}
-          </div>
+
+              {aiProvider.kind === "openai_compat" ? (
+                <div className="menu__group" style={{ padding: 0 }}>
+                  <div className="menu__label">API key</div>
+                  <input
+                    className="menu__select"
+                    type="password"
+                    value={aiProvider.api_key || ""}
+                    onChange={(e) => setAiProvider((p) => ({ ...p, api_key: e.target.value }))}
+                    disabled={busy}
+                    placeholder="(optional)"
+                  />
+                </div>
+              ) : null}
+
+              <label className="check" style={{ marginTop: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={aiIncludeProject}
+                  onChange={(e) => setAiIncludeProject(e.target.checked)}
+                  disabled={busy}
+                />
+                Include project context (whole project)
+              </label>
+              <div className="field__hint">svAi reads your project files locally and sends a capped context to the model.</div>
+
+              {aiApplyStatus ? (
+                <div style={{ marginTop: 10 }}>
+                  <div className="menu__label">Last apply</div>
+                  <div className="muted" style={{ fontSize: 12 }}>{aiApplyStatus}</div>
+                  <div className="menu__label" style={{ marginTop: 8 }}>Details</div>
+                  <pre className="terminal__body" style={{ marginTop: 6, maxHeight: 160, overflow: "auto" }}>{aiApplyDetails || "(no details)"}</pre>
+                </div>
+              ) : null}
+            </div>
+          </details>
 
           <div className="aiDock__messages">
             {aiMessages.length === 0 ? (
