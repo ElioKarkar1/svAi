@@ -2422,7 +2422,24 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                       if (n.isDir) {
                         const isOpen = expanded[n.path] ?? false;
                         return (
-                          <div key={n.path}>
+                          <div
+                            key={n.path}
+                            onDragOver={(e) => {
+                              // Important: preventDefault here (container), not just the button,
+                              // otherwise some browsers show the ⛔ icon when hovering child spans.
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                              setDragOverPath(n.path);
+                            }}
+                            onDragLeave={() => {
+                              setDragOverPath((prev) => (prev === n.path ? "" : prev));
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from = e.dataTransfer.getData("text/plain") || "";
+                              void moveTreePath(from, n.path);
+                            }}
+                          >
                             <button
                               className={
                                 "treeRow treeRow--dir " +
@@ -2443,18 +2460,6 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                               onDragStart={(e) => {
                                 e.dataTransfer.setData("text/plain", n.path);
                                 e.dataTransfer.effectAllowed = "move";
-                              }}
-                              onDragOver={(e) => {
-                                e.preventDefault();
-                                setDragOverPath(n.path);
-                              }}
-                              onDragLeave={() => {
-                                setDragOverPath((prev) => (prev === n.path ? "" : prev));
-                              }}
-                              onDrop={(e) => {
-                                e.preventDefault();
-                                const from = e.dataTransfer.getData("text/plain") || "";
-                                void moveTreePath(from, n.path);
                               }}
                             >
                               <span className="chev">{isOpen ? "▾" : "▸"}</span>
