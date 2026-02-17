@@ -70,6 +70,46 @@ In svAi:
 
 ---
 
+## AI Assist (local Ollama)
+
+svAi can run an AI helper locally via **Ollama**.
+
+### Install Ollama
+
+1) Install Ollama for Windows: <https://ollama.com/download>
+2) Pull a coding model (recommended default):
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+3) Sanity check:
+
+```bash
+ollama list
+```
+
+Ollama usually serves an HTTP API at:
+- `http://localhost:11434`
+
+### Use in svAi
+
+1) Open a project folder
+2) Open the **AI panel** (right sidebar)
+3) Set provider to **Local (Ollama)**
+4) Base URL: `http://localhost:11434`
+5) Model: `qwen2.5-coder:7b`
+6) Type a message and press **Enter** to send (Shift+Enter for newline)
+
+### Code editing
+
+svAi currently applies AI edits by requesting the **full updated file contents** from the model and rewriting the target file.
+This is more reliable than applying AI-generated patch hunks.
+
+If the model returns diff-like output, svAi will try to strip diff markers; otherwise it will ask you to try again.
+
+---
+
 ## Project config (.svlab.json)
 
 svAi stores project settings in `.svlab.json` in the project root.
