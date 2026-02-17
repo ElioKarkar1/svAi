@@ -116,7 +116,7 @@ const lsCursorKey = (root: string) => `svai.cursor.${root}`;
 
 type LintResult = { code: number; output: string };
 
-type BottomTab = "problems" | "terminal" | "ai";
+type BottomTab = "problems" | "terminal";
 
 type ActivityTab = "explorer" | "problems" | "terminal" | "ai" | "settings";
 
@@ -789,7 +789,7 @@ export default function App() {
     setAiMessages(nextMsgs);
     setAiInput("");
     setBusy(true);
-    setBottomTab("ai");
+    setAiOpen(true);
     try {
       const res = (await invoke("ai_chat", {
         root,
@@ -2137,21 +2137,14 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
 
           <button
             className={"activity__btn " + (aiOpen ? "is-active" : "")}
-            data-label="AI Panel"
-            aria-label="AI Panel"
+            data-label="AI"
+            aria-label="AI"
             onClick={() => {
               setAiOpen((v) => !v);
-              if (!aiOpen) {
-                setActivityTab("ai");
-                setBottomTab("ai");
-              }
+              if (!aiOpen) setActivityTab("ai");
             }}
           >
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M7 12a5 5 0 0 1 10 0v4a3 3 0 0 1-3 3H10a3 3 0 0 1-3-3v-4Z" stroke="currentColor" strokeWidth="1.6" />
-              <path d="M9 11V9a3 3 0 0 1 6 0v2" stroke="currentColor" strokeWidth="1.6" opacity="0.8"/>
-              <path d="M5.5 12h1.2M17.3 12h1.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
-            </svg>
+            AI
           </button>
 
           <div style={{ flex: 1 }} />
@@ -2347,15 +2340,6 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
           <button className={"bottomTab " + (bottomTab === "terminal" ? "is-active" : "")} onClick={() => setBottomTab("terminal")}>
             Terminal
           </button>
-          <button
-            className={"bottomTab " + (aiOpen ? "is-active" : "")}
-            onClick={() => {
-              setBottomTab("ai");
-              setAiOpen((v) => !v);
-            }}
-          >
-            AI
-          </button>
         </div>
         <div className="panel">
           {bottomTab === "problems" ? (
@@ -2407,14 +2391,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
             </div>
           ) : null}
 
-          {bottomTab === "ai" ? (
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-              <div className="muted">AI Assist is in the right sidebar.</div>
-              <button className="btn" onClick={() => setAiOpen(true)} disabled={busy}>
-                Open AI Panel
-              </button>
-            </div>
-          ) : null}
+          {/* AI panel is only the right sidebar now */}
         </div>
       </div>
 
