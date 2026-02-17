@@ -865,7 +865,7 @@ export default function App() {
   }, [root, rootName, activeTab?.relPath]);
 
   return (
-    <div className="app">
+    <div className={"app" + (aiOpen ? " app--ai" : "")}>
       <div className="titlebar">
         <div className="titlebar__left">
           <div className="titlebar__app">svAi{phase !== "idle" ? ` · ${phase}` : ""}</div>
@@ -1885,8 +1885,7 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
         </div>
       </div>
 
-      {aiOpen ? (
-        <div className="aiDock" onClick={(e) => e.stopPropagation()}>
+      <div className={"aiDock" + (aiOpen ? " is-open" : "")} onClick={(e) => e.stopPropagation()}>
           <div className="aiDock__head">
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ fontWeight: 800 }}>AI</div>
@@ -2008,8 +2007,7 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
+      </div>
 
       <div className="statusbar">
         <div className="statusbar__left">
