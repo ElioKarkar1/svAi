@@ -88,6 +88,8 @@ type AiChatResult = { code: number; output: string };
 
 type PatchApplyResult = { ok: boolean; file: string; message: string };
 
+type PatchPreviewResult = { ok: boolean; file: string; start_line: number; after: string; message: string };
+
 type SvlabConfig = {
   top: string;
   filelist: string;
@@ -212,6 +214,9 @@ export default function App() {
   const [aiPatchOpen, setAiPatchOpen] = useState<boolean>(false);
   const [aiPatchText, setAiPatchText] = useState<string>("");
   const [aiPatchFile, setAiPatchFile] = useState<string>("");
+
+  const [aiInlinePatch, setAiInlinePatch] = useState<{ file: string; line: number; after: string } | null>(null);
+  const [aiInlineY, setAiInlineY] = useState<number>(12);
   const [psCreateRtl, setPsCreateRtl] = useState<boolean>(true);
   const [psCreateTb, setPsCreateTb] = useState<boolean>(true);
   const [psWriteFilelist, setPsWriteFilelist] = useState<boolean>(true);
@@ -221,6 +226,7 @@ export default function App() {
   const [cursorCol, setCursorCol] = useState<number>(1);
 
   const editorRef = useRef<any>(null);
+  const aiInlineRef = useRef<{ file: string; line: number; after: string } | null>(null);
   const buildMenuRef = useRef<HTMLDetailsElement | null>(null);
   const projectMenuRef = useRef<HTMLDetailsElement | null>(null);
   const toolsMenuRef = useRef<HTMLDetailsElement | null>(null);
@@ -310,6 +316,10 @@ export default function App() {
     }
   }, [aiMessages]);
 
+  useEffect(() => {
+    aiInlineRef.current = aiInlinePatch;
+  }, [aiInlinePatch]);
+
   // Persist last active file + cursor (best-effort).
   useEffect(() => {
     if (!root) return;
@@ -344,6 +354,46 @@ export default function App() {
       pushRun({ title: "AI", output: "No ```diff``` patch found in the assistant message." });
       return;
     }
+
+    const normalizedFile = (got.file || "").replace(/\\/g, "/");
+    const isOpen = !!openTabs.find((t) => t.relPath === normalizedFile);
+
+    if (root && normalizedFile && isOpen) {
+      // Inline preview when file is open
+      void (async () => {
+        try {
+          const prev = (await invoke("project_patch_preview", { root, patch: got.patch })) as PatchPreviewResult;
+          if (!prev.ok) {
+            pushRun({ title: "Patch preview (error)", output: prev.message || "preview failed" });
+            return;
+          }
+          setAiPatchText(got.patch);
+          setAiPatchFile(prev.file || normalizedFile);
+          setAiInlinePatch({ file: normalizedFile, line: prev.start_line || 1, after: prev.after || "" });
+
+          // try to scroll to the line and position the bubble under it
+          setTimeout(() => {
+            const ed = editorRef.current;
+            if (!ed) return;
+            const ln = prev.start_line || 1;
+            ed.revealLineInCenter(ln);
+            try {
+              const pos = ed.getScrolledVisiblePosition({ lineNumber: ln, column: 1 });
+              if (pos && typeof pos.top === "number") {
+                setAiInlineY(Math.max(12, Math.floor(pos.top + pos.height + 8)));
+              }
+            } catch {
+              // ignore
+            }
+          }, 60);
+        } catch (e: any) {
+          pushRun({ title: "Patch preview (error)", output: String(e ?? "") });
+        }
+      })();
+      return;
+    }
+
+    // Fallback: modal
     setAiPatchText(got.patch);
     setAiPatchFile(got.file);
     setAiPatchOpen(true);
@@ -370,6 +420,7 @@ export default function App() {
         }
       }
       setAiPatchOpen(false);
+      setAiInlinePatch(null);
     } catch (e: any) {
       pushRun({ title: "Apply patch (error)", output: String(e ?? "") });
     } finally {
@@ -1828,10 +1879,11 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
 
           <div style={{ minHeight: 0 }}>
             {activeTab ? (
-              <Editor
-                theme="vs-dark"
-                language={activeTab.language}
-                value={activeTab.value}
+              <div style={{ position: "relative", height: "100%" }}>
+                <Editor
+                  theme="vs-dark"
+                  language={activeTab.language}
+                  value={activeTab.value}
                 onMount={(ed) => {
                   editorRef.current = ed;
                   const pos = ed.getPosition();
@@ -1842,6 +1894,18 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
                   ed.onDidChangeCursorPosition((e) => {
                     setCursorLine(e.position.lineNumber);
                     setCursorCol(e.position.column);
+                  });
+                  ed.onDidScrollChange(() => {
+                    const cur = aiInlineRef.current;
+                    if (!cur) return;
+                    try {
+                      const pos = ed.getScrolledVisiblePosition({ lineNumber: cur.line, column: 1 });
+                      if (pos && typeof pos.top === "number") {
+                        setAiInlineY(Math.max(12, Math.floor(pos.top + pos.height + 8)));
+                      }
+                    } catch {
+                      // ignore
+                    }
                   });
                 }}
                 onChange={(val) => {
@@ -1862,6 +1926,36 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
                   padding: { top: 10 },
                 }}
               />
+
+              {aiInlinePatch && activeTab?.relPath === aiInlinePatch.file ? (
+                <div
+                  className="inlinePatch"
+                  style={{
+                    position: "absolute",
+                    left: 12,
+                    top: aiInlineY,
+                    right: 12,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                    <div style={{ fontWeight: 800 }}>Suggested change</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button className="btn" onClick={() => setAiInlinePatch(null)} disabled={busy}>
+                        Dismiss
+                      </button>
+                      <button className="btn primary" onClick={() => void applyPatch()} disabled={busy}>
+                        Apply
+                      </button>
+                    </div>
+                  </div>
+                  <div className="ctx__sep" style={{ margin: "10px 0" }} />
+                  <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                    {aiInlinePatch.file}:{aiInlinePatch.line}
+                  </div>
+                  <pre className="terminal__body" style={{ margin: 0, maxHeight: 140, overflow: "auto" }}>{aiInlinePatch.after || ""}</pre>
+                </div>
+              ) : null}
+            </div>
             ) : (
               <div className="panel muted">No file open.</div>
             )}

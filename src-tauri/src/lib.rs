@@ -1189,6 +1189,15 @@ struct PatchApplyResult {
     message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PatchPreviewResult {
+    ok: bool,
+    file: String,
+    start_line: usize,
+    after: String,
+    message: String,
+}
+
 fn extract_patch_target_file(patch_text: &str) -> Result<String, String> {
     // Prefer +++ b/<file>
     for line in patch_text.lines() {
@@ -1203,6 +1212,78 @@ fn extract_patch_target_file(patch_text: &str) -> Result<String, String> {
         }
     }
     Err("Couldn't determine patch target file (expected +++ b/<file>)".to_string())
+}
+
+fn strip_to_unified_diff(patch_text: &str) -> String {
+    let p = patch_text.replace("\r\n", "\n");
+    if p.starts_with("--- ") {
+        return p;
+    }
+    if let Some((_before, after)) = p.split_once("\n--- ") {
+        return format!("--- {}", after);
+    }
+    p
+}
+
+fn parse_first_new_start(patch_text: &str) -> Option<usize> {
+    // @@ -a,b +c,d @@
+    for line in patch_text.lines() {
+        if let Some(rest) = line.strip_prefix("@@") {
+            // cheap parse: find +<num>
+            if let Some(plus) = rest.find('+') {
+                let after = &rest[plus + 1..];
+                let num: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(n) = num.parse::<usize>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn apply_patch_to_text(old_raw: &str, patch_text: &str) -> Result<String, String> {
+    let old = old_raw.replace("\r\n", "\n");
+    let patch_for_diffy = strip_to_unified_diff(patch_text);
+
+    if !patch_for_diffy.contains("\n+++ ") || !patch_for_diffy.contains("\n--- ") {
+        return Err("Patch must include both --- and +++ headers".to_string());
+    }
+
+    let patch_obj = Patch::from_str(&patch_for_diffy).map_err(|e| format!("Invalid patch: {e}"))?;
+    apply(&old, &patch_obj).map_err(|e| format!("Patch didn't apply cleanly: {e}"))
+}
+
+#[tauri::command]
+fn project_patch_preview(root: String, patch: String) -> Result<PatchPreviewResult, String> {
+    let rootp = PathBuf::from(&root);
+    let _canon = rootp
+        .canonicalize()
+        .map_err(|e| format!("Invalid root: {e}"))?;
+
+    let target_rel = extract_patch_target_file(&patch)?;
+    let target_rel_norm = target_rel.replace('\\', "/");
+    let p = rootp.join(&target_rel_norm);
+    ensure_within_root(&rootp, &p)?;
+
+    let old_raw = fs::read_to_string(&p).map_err(|e| format!("Failed to read target file: {e}"))?;
+    let new = apply_patch_to_text(&old_raw, &patch)?;
+
+    let patch_for_diffy = strip_to_unified_diff(&patch);
+    let start_line = parse_first_new_start(&patch_for_diffy).unwrap_or(1);
+
+    let lines: Vec<&str> = new.split('\n').collect();
+    let idx = start_line.saturating_sub(1);
+    let end = (idx + 8).min(lines.len());
+    let after = lines[idx..end].join("\n");
+
+    Ok(PatchPreviewResult {
+        ok: true,
+        file: target_rel_norm,
+        start_line,
+        after,
+        message: "OK".to_string(),
+    })
 }
 
 #[tauri::command]
@@ -1220,27 +1301,7 @@ fn project_apply_patch(root: String, patch: String) -> Result<PatchApplyResult, 
     let old_raw = fs::read_to_string(&p).map_err(|e| format!("Failed to read target file: {e}"))?;
     let had_crlf = old_raw.contains("\r\n");
 
-    // Normalize line endings so patches created on other platforms apply reliably.
-    let old = old_raw.replace("\r\n", "\n");
-    let patch_norm = patch.replace("\r\n", "\n");
-
-    // diffy expects a unified diff starting at ---/+++; many models output git headers first.
-    let patch_for_diffy = if patch_norm.contains("\n--- ") {
-        patch_norm
-            .splitn(2, "\n--- ")
-            .nth(1)
-            .map(|rest| format!("--- {}", rest))
-            .unwrap_or(patch_norm)
-    } else if patch_norm.starts_with("--- ") {
-        patch_norm
-    } else {
-        patch_norm
-    };
-
-    let patch_obj = Patch::from_str(&patch_for_diffy).map_err(|e| format!("Invalid patch: {e}"))?;
-    let mut new =
-        apply(&old, &patch_obj).map_err(|e| format!("Patch didn't apply cleanly: {e}"))?;
-
+    let mut new = apply_patch_to_text(&old_raw, &patch)?;
     if had_crlf {
         new = new.replace("\n", "\r\n");
     }
@@ -1950,6 +2011,7 @@ pub fn run() {
             project_setup_apply,
             project_new_create,
             ai_chat,
+            project_patch_preview,
             project_apply_patch,
             project_build,
             project_run,
