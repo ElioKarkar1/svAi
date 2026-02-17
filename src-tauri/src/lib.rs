@@ -1251,7 +1251,7 @@ async fn ai_chat(
         let sys = AiMessage {
             role: "system".to_string(),
             content: format!(
-                "You are svAi, an assistant for SystemVerilog projects. Use the provided project context to answer.\n\n{}",
+                "You are svAi, an assistant for SystemVerilog projects. Use the provided project context to answer.\n\nWhen proposing code changes, output a unified diff inside a fenced ```diff code block using paths like '+++ b/<relative/path>'. If you are not changing code, do not output a diff.\n\n{}",
                 ctx
             ),
         };

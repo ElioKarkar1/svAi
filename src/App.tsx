@@ -2059,14 +2059,15 @@ pacman -S --needed \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-ucrt-x86_64-m
               disabled={busy || !root}
               rows={3}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                  e.preventDefault();
-                  void aiSend(aiInput);
-                }
+                if (e.key !== "Enter") return;
+                // Enter sends; Shift+Enter inserts newline
+                if (e.shiftKey) return;
+                e.preventDefault();
+                void aiSend(aiInput);
               }}
             />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
-              <div className="muted">Ctrl+Enter to send</div>
+              <div className="muted">Enter to send · Shift+Enter for newline</div>
               <button className="btn primary" onClick={() => void aiSend(aiInput)} disabled={busy || !root || !aiInput.trim()}>
                 Send
               </button>
