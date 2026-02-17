@@ -211,6 +211,10 @@ export default function App() {
   });
   const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
   const [aiInput, setAiInput] = useState<string>("");
+
+  const [aiApplyStatus, setAiApplyStatus] = useState<string>("");
+  const [aiApplyDetails, setAiApplyDetails] = useState<string>("");
+
   // Patch preview/apply flow disabled for now; using full-file apply for reliability.
   const [_aiPatchOpen, _setAiPatchOpen] = useState<boolean>(false);
   const [_aiPatchText, _setAiPatchText] = useState<string>("");
@@ -396,18 +400,16 @@ export default function App() {
         `Do not output a diff. Do not add explanations.`,
     };
 
-    const nextMsgs = [...aiMessages, extra];
-    setAiMessages(nextMsgs);
+    const messagesForModel = [...aiMessages, extra];
 
     const res = (await invoke("ai_chat", {
       root,
       provider: aiProvider,
-      messages: nextMsgs,
+      messages: messagesForModel,
       includeProject: aiIncludeProject,
     })) as AiChatResult;
 
     const reply = (res.output || "").trim();
-    setAiMessages((prev) => [...prev, { role: "assistant", content: reply || "(no response)" }]);
 
     let newFile = tryExtractCodeBlock(reply);
     if (!newFile) {
@@ -474,18 +476,20 @@ export default function App() {
           `The find string must appear exactly once in the current file. No markdown, no explanation.`,
       };
 
-      const nextMsgs = [...aiMessages, editReq];
-      setAiMessages(nextMsgs);
+      const messagesForModel = [...aiMessages, editReq];
+
+      setAiApplyStatus(`Applying patch… (${targetRel})`);
+      setAiApplyDetails("");
 
       const res = (await invoke("ai_chat", {
         root,
         provider: aiProvider,
-        messages: nextMsgs,
+        messages: messagesForModel,
         includeProject: aiIncludeProject,
       })) as AiChatResult;
 
       const reply = (res.output || "").trim();
-      setAiMessages((prev) => [...prev, { role: "assistant", content: reply || "(no response)" }]);
+      setAiApplyDetails(reply);
 
       const obj = tryParseJsonObject(reply);
       const find = (obj?.find || "").toString();
@@ -497,6 +501,8 @@ export default function App() {
           const updated = current.replace(find, replace);
           await invoke("project_write_file", { root, relPath: targetRel, content: updated });
           pushRun({ title: "AI edit", output: `Patched: ${targetRel}` });
+          setAiApplyStatus(`Patched: ${targetRel}`);
+          setAiMessages((prev) => [...prev, { role: "assistant", content: `Applied patch to ${targetRel}.` }]);
           await refreshTree(root);
           if (openTabs.find((t) => t.relPath === targetRel)) {
             setOpenTabs((prev) => prev.map((t) => (t.relPath === targetRel ? { ...t, value: updated, dirty: false } : t)));
@@ -508,9 +514,15 @@ export default function App() {
 
       // 2) Fallback: rewrite full file.
       pushRun({ title: "AI edit", output: "Patch failed; falling back to full-file rewrite…" });
+      setAiApplyStatus(`Patch failed; rewriting full file… (${targetRel})`);
       await applyAssistantAsFullFile(targetRel);
+      setAiApplyStatus(`Updated: ${targetRel}`);
+      setAiMessages((prev) => [...prev, { role: "assistant", content: `Updated ${targetRel}.` }]);
     } catch (e: any) {
-      pushRun({ title: "AI edit (error)", output: String(e?.message ?? e ?? "") });
+      const msg = String(e?.message ?? e ?? "");
+      pushRun({ title: "AI edit (error)", output: msg });
+      setAiApplyStatus(`Error: ${msg}`);
+      setAiMessages((prev) => [...prev, { role: "assistant", content: `Edit failed: ${msg}` }]);
     } finally {
       setBusy(false);
     }
@@ -2182,6 +2194,17 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
               Include project context (whole project)
             </label>
             <div className="field__hint">svAi reads your project files locally and sends a capped context to the model.</div>
+
+            {aiApplyStatus ? (
+              <div style={{ marginTop: 10 }}>
+                <div className="menu__label">Last apply</div>
+                <div className="muted" style={{ fontSize: 12 }}>{aiApplyStatus}</div>
+                <details style={{ marginTop: 6 }}>
+                  <summary className="btn" style={{ display: "inline-block" }}>Details ▾</summary>
+                  <pre className="terminal__body" style={{ marginTop: 8, maxHeight: 160, overflow: "auto" }}>{aiApplyDetails || "(no details)"}</pre>
+                </details>
+              </div>
+            ) : null}
           </div>
 
           <div className="aiDock__messages">
