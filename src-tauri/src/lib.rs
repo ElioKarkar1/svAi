@@ -1383,7 +1383,7 @@ async fn ai_chat(
         let sys = AiMessage {
             role: "system".to_string(),
             content: format!(
-                "You are svAi, an assistant for SystemVerilog projects. Use the provided project context to answer.\n\nWhen proposing code changes, output a unified diff inside a fenced ```diff code block using paths like '+++ b/<relative/path>'. If you are not changing code, do not output a diff.\n\n{}",
+                "You are svAi, an assistant for SystemVerilog projects. Use the provided project context to answer.\n\nIMPORTANT PATCH RULES (must follow):\n- If you propose code changes, respond with ONLY a single fenced ```diff block. No commentary outside the diff.\n- The diff MUST be a valid unified diff and MUST include BOTH headers:\n  --- a/<relative/path>\n  +++ b/<relative/path>\n- Each hunk MUST start with @@ -old,+new @@ and EVERY line in the hunk MUST start with exactly one of: ' ' (space), '+' or '-'.\n- Include at least 3 lines of unchanged context before/after the change so the patch applies cleanly.\n- Use forward slashes in paths.\n- If you are not changing code, do NOT output a diff.\n\n{}",
                 ctx
             ),
         };
