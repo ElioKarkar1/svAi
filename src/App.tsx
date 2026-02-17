@@ -384,30 +384,97 @@ export default function App() {
     return out.join("\n").trimEnd();
   };
 
-  const applyAssistantAsFullFile = async (assistantIndex: number) => {
+  const applyAssistantAsFullFile = async (targetRel: string) => {
     if (!root) return;
-    const assistantText = aiMessages[assistantIndex]?.content || "";
+    if (!targetRel) return;
 
-    // Determine target file: prefer diff headers; otherwise fall back to active tab.
+    // Ask AI to output the complete updated file.
+    const extra: AiMessage = {
+      role: "user",
+      content:
+        `For file ${targetRel}: output the COMPLETE updated file contents ONLY in a single fenced code block. ` +
+        `Do not output a diff. Do not add explanations.`,
+    };
+
+    const nextMsgs = [...aiMessages, extra];
+    setAiMessages(nextMsgs);
+
+    const res = (await invoke("ai_chat", {
+      root,
+      provider: aiProvider,
+      messages: nextMsgs,
+      includeProject: aiIncludeProject,
+    })) as AiChatResult;
+
+    const reply = (res.output || "").trim();
+    setAiMessages((prev) => [...prev, { role: "assistant", content: reply || "(no response)" }]);
+
+    let newFile = tryExtractCodeBlock(reply);
+    if (!newFile) {
+      throw new Error("AI did not return a fenced code block with full file contents.");
+    }
+
+    if (looksLikeDiff(newFile)) {
+      // The model ignored instructions and returned a diff; try to strip markers.
+      newFile = stripLeadingDiffMarkers(newFile);
+    }
+
+    // Last sanity: if it still looks like a diff, bail.
+    if (looksLikeDiff(newFile)) {
+      throw new Error("AI returned a diff instead of full file contents.");
+    }
+
+    await invoke("project_write_file", { root, relPath: targetRel, content: newFile });
+    pushRun({ title: "AI edit", output: `Updated: ${targetRel}` });
+
+    // Refresh tree + update open tab if present.
+    await refreshTree(root);
+    if (openTabs.find((t) => t.relPath === targetRel)) {
+      setOpenTabs((prev) => prev.map((t) => (t.relPath === targetRel ? { ...t, value: newFile, dirty: false } : t)));
+    }
+    setActiveRel(targetRel);
+  };
+
+  const tryParseJsonObject = (s: string): any | null => {
+    const raw = (s || "").trim();
+    // Try fenced json first
+    const fenced = raw.match(/```json\s*([\s\S]*?)```/i);
+    const candidate = (fenced?.[1] || raw).trim();
+    try {
+      const v = JSON.parse(candidate);
+      if (v && typeof v === "object") return v;
+    } catch {
+      // ignore
+    }
+    return null;
+  };
+
+  const applyAssistantAuto = async (assistantIndex: number) => {
+    if (!root) return;
+
+    const assistantText = aiMessages[assistantIndex]?.content || "";
     const got = tryExtractDiffPatch(assistantText);
     const targetRel = ((got?.file || activeTab?.relPath || "") as string).replace(/\\/g, "/");
     if (!targetRel) {
-      pushRun({ title: "AI", output: "No target file (open a file or include a diff header)." });
+      pushRun({ title: "AI", output: "No target file (open a file first)." });
       return;
     }
 
     setBusy(true);
     setBottomTab("terminal");
     try {
-      // Ask AI to output the complete updated file.
-      const extra: AiMessage = {
+      // 1) Try a deterministic snippet edit first.
+      const current = (await invoke("project_read_file", { root, relPath: targetRel })) as string;
+
+      const editReq: AiMessage = {
         role: "user",
         content:
-          `For file ${targetRel}: output the COMPLETE updated file contents ONLY in a single fenced code block. ` +
-          `Do not output a diff. Do not add explanations.`,
+          `Return ONLY JSON for a small edit to ${targetRel}. ` +
+          `Schema: {"file":"${targetRel}","find":"<exact substring>","replace":"<replacement>"}. ` +
+          `The find string must appear exactly once in the current file. No markdown, no explanation.`,
       };
 
-      const nextMsgs = [...aiMessages, extra];
+      const nextMsgs = [...aiMessages, editReq];
       setAiMessages(nextMsgs);
 
       const res = (await invoke("ai_chat", {
@@ -420,34 +487,30 @@ export default function App() {
       const reply = (res.output || "").trim();
       setAiMessages((prev) => [...prev, { role: "assistant", content: reply || "(no response)" }]);
 
-      let newFile = tryExtractCodeBlock(reply);
-      if (!newFile) {
-        pushRun({ title: "AI (error)", output: "AI did not return a fenced code block with full file contents." });
-        return;
+      const obj = tryParseJsonObject(reply);
+      const find = (obj?.find || "").toString();
+      const replace = (obj?.replace || "").toString();
+
+      if (find && typeof replace === "string") {
+        const hits = current.split(find).length - 1;
+        if (hits === 1) {
+          const updated = current.replace(find, replace);
+          await invoke("project_write_file", { root, relPath: targetRel, content: updated });
+          pushRun({ title: "AI edit", output: `Patched: ${targetRel}` });
+          await refreshTree(root);
+          if (openTabs.find((t) => t.relPath === targetRel)) {
+            setOpenTabs((prev) => prev.map((t) => (t.relPath === targetRel ? { ...t, value: updated, dirty: false } : t)));
+          }
+          setActiveRel(targetRel);
+          return;
+        }
       }
 
-      if (looksLikeDiff(newFile)) {
-        // The model ignored instructions and returned a diff; try to strip markers.
-        newFile = stripLeadingDiffMarkers(newFile);
-      }
-
-      // Last sanity: if it still looks like a diff, bail.
-      if (looksLikeDiff(newFile)) {
-        pushRun({ title: "AI (error)", output: "AI returned a diff instead of full file contents. Try again." });
-        return;
-      }
-
-      await invoke("project_write_file", { root, relPath: targetRel, content: newFile });
-      pushRun({ title: "AI edit", output: `Updated: ${targetRel}` });
-
-      // Refresh tree + update open tab if present.
-      await refreshTree(root);
-      if (openTabs.find((t) => t.relPath === targetRel)) {
-        setOpenTabs((prev) => prev.map((t) => (t.relPath === targetRel ? { ...t, value: newFile, dirty: false } : t)));
-      }
-      setActiveRel(targetRel);
+      // 2) Fallback: rewrite full file.
+      pushRun({ title: "AI edit", output: "Patch failed; falling back to full-file rewrite…" });
+      await applyAssistantAsFullFile(targetRel);
     } catch (e: any) {
-      pushRun({ title: "AI edit (error)", output: String(e ?? "") });
+      pushRun({ title: "AI edit (error)", output: String(e?.message ?? e ?? "") });
     } finally {
       setBusy(false);
     }
@@ -2133,7 +2196,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                     <div className="aiMsg__content">{m.content}</div>
                     {patch ? (
                       <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                        <button className="btn primary" onClick={() => void applyAssistantAsFullFile(idx)} disabled={busy || !root}>
+                        <button className="btn primary" onClick={() => void applyAssistantAuto(idx)} disabled={busy || !root}>
                           Apply
                         </button>
                       </div>
