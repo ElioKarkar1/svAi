@@ -1224,7 +1224,20 @@ fn project_apply_patch(root: String, patch: String) -> Result<PatchApplyResult, 
     let old = old_raw.replace("\r\n", "\n");
     let patch_norm = patch.replace("\r\n", "\n");
 
-    let patch_obj = Patch::from_str(&patch_norm).map_err(|e| format!("Invalid patch: {e}"))?;
+    // diffy expects a unified diff starting at ---/+++; many models output git headers first.
+    let patch_for_diffy = if patch_norm.contains("\n--- ") {
+        patch_norm
+            .splitn(2, "\n--- ")
+            .nth(1)
+            .map(|rest| format!("--- {}", rest))
+            .unwrap_or(patch_norm)
+    } else if patch_norm.starts_with("--- ") {
+        patch_norm
+    } else {
+        patch_norm
+    };
+
+    let patch_obj = Patch::from_str(&patch_for_diffy).map_err(|e| format!("Invalid patch: {e}"))?;
     let mut new =
         apply(&old, &patch_obj).map_err(|e| format!("Patch didn't apply cleanly: {e}"))?;
 
