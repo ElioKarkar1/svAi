@@ -498,6 +498,14 @@ fn project_write_file(root: String, rel_path: String, content: String) -> Result
 }
 
 #[tauri::command]
+fn project_exists(root: String, rel_path: String) -> Result<bool, String> {
+    let rootp = PathBuf::from(&root);
+    let p = rootp.join(&rel_path);
+    ensure_within_root(&rootp, &p)?;
+    Ok(p.exists())
+}
+
+#[tauri::command]
 fn project_mkdir(root: String, rel_path: String) -> Result<(), String> {
     let rootp = PathBuf::from(&root);
     let p = rootp.join(&rel_path);
@@ -2089,6 +2097,7 @@ pub fn run() {
             project_list,
             project_read_file,
             project_write_file,
+            project_exists,
             project_mkdir,
             project_create_file,
             project_rename,

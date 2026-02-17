@@ -86,6 +86,10 @@ type AiProvider = {
 
 type AiChatResult = { code: number; output: string };
 
+type AiFileOp =
+  | { op: "create_file"; file: string; content: string }
+  | { op: "edit"; file: string; find: string; replace: string };
+
 // type PatchApplyResult removed (patch flow disabled)
 
 // type PatchPreviewResult removed (patch preview disabled for now)
@@ -451,10 +455,112 @@ export default function App() {
     return null;
   };
 
+  const isBlockedRelPath = (p: string): boolean => {
+    const s = (p || "").replace(/\\/g, "/").trim();
+    if (!s) return true;
+    const lower = s.toLowerCase();
+    if (lower.startsWith("/") || lower.includes("://")) return true;
+    // no absolute windows paths
+    if (/^[a-zA-Z]:\//.test(s) || /^[a-zA-Z]:\\/.test(p || "")) return true;
+    const blocked = [".git/", "node_modules/", "dist/", "target/", ".svlab/"];
+    return blocked.some((b) => lower.startsWith(b) || lower.includes(`/${b}`));
+  };
+
+  const nextSuffixPath = (rel: string, n: number): string => {
+    const normalized = rel.replace(/\\/g, "/");
+    const parts = normalized.split("/");
+    const name = parts.pop() || normalized;
+    const dot = name.lastIndexOf(".");
+    const base = dot >= 0 ? name.slice(0, dot) : name;
+    const ext = dot >= 0 ? name.slice(dot) : "";
+    const next = `${base}_${n}${ext}`;
+    return [...parts, next].filter(Boolean).join("/");
+  };
+
   const applyAssistantAuto = async (assistantIndex: number) => {
     if (!root) return;
 
     const assistantText = aiMessages[assistantIndex]?.content || "";
+    const obj = tryParseJsonObject(assistantText) as AiFileOp | null;
+
+    // If the assistant provided a file op JSON, handle it.
+    if (obj && typeof obj === "object" && typeof (obj as any).op === "string") {
+      const op = (obj as any).op;
+      const file = ((obj as any).file || "").toString().replace(/\\/g, "/");
+      if (!file || isBlockedRelPath(file)) {
+        pushRun({ title: "AI (error)", output: "AI returned an invalid/blocked file path." });
+        return;
+      }
+
+      setBusy(true);
+      setBottomTab("terminal");
+      try {
+        if (op === "create_file") {
+          const content = ((obj as any).content || "").toString();
+          if (!content.trim()) {
+            pushRun({ title: "AI (error)", output: "AI create_file missing content." });
+            return;
+          }
+
+          const exists = (await invoke("project_exists", { root, relPath: file })) as boolean;
+          let finalPath = file;
+          if (exists) {
+            const okOverwrite = window.confirm(`File already exists: ${file}\n\nOK = overwrite\nCancel = create copy with suffix`);
+            if (!okOverwrite) {
+              let k = 2;
+              while (k < 50) {
+                const cand = nextSuffixPath(file, k);
+                const candExists = (await invoke("project_exists", { root, relPath: cand })) as boolean;
+                if (!candExists) {
+                  finalPath = cand;
+                  break;
+                }
+                k += 1;
+              }
+            }
+          }
+
+          await invoke("project_write_file", { root, relPath: finalPath, content });
+          pushRun({ title: "AI", output: `Created: ${finalPath}` });
+          await refreshTree(root);
+          await openFile(finalPath);
+          return;
+        }
+
+        if (op === "edit") {
+          // Use existing patch logic for edits
+          const targetRel = file;
+          const current = (await invoke("project_read_file", { root, relPath: targetRel })) as string;
+          const find = ((obj as any).find || "").toString();
+          const replace = ((obj as any).replace || "").toString();
+          const hits = find ? current.split(find).length - 1 : 0;
+          if (hits === 1) {
+            const updated = current.replace(find, replace);
+            await invoke("project_write_file", { root, relPath: targetRel, content: updated });
+            pushRun({ title: "AI", output: `Patched: ${targetRel}` });
+            await refreshTree(root);
+            if (openTabs.find((t) => t.relPath === targetRel)) {
+              setOpenTabs((prev) => prev.map((t) => (t.relPath === targetRel ? { ...t, value: updated, dirty: false } : t)));
+            }
+            setActiveRel(targetRel);
+            return;
+          }
+
+          pushRun({ title: "AI", output: "Edit JSON did not apply cleanly (find must match exactly once)." });
+          return;
+        }
+
+        pushRun({ title: "AI (error)", output: `Unknown op: ${op}` });
+      } catch (e: any) {
+        pushRun({ title: "AI (error)", output: String(e?.message ?? e ?? "") });
+      } finally {
+        setBusy(false);
+      }
+
+      return;
+    }
+
+    // Otherwise: existing auto-apply flow (ask for JSON patch against active file / diff target)
     const got = tryExtractDiffPatch(assistantText);
     const targetRel = ((got?.file || activeTab?.relPath || "") as string).replace(/\\/g, "/");
     if (!targetRel) {
