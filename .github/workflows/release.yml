@@ -53,3 +53,19 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Remove sha256:* assets (cleanup)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = context.ref.replace('refs/tags/', '');
+            const rel = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+            const assets = rel.data.assets || [];
+            const doomed = assets.filter(a => (a.name || '').startsWith('sha256:'));
+            core.info(`Found ${doomed.length} sha256:* assets`);
+            for (const a of doomed) {
+              core.info(`Deleting asset: ${a.name} (${a.id})`);
+              await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: a.id });
+            }
