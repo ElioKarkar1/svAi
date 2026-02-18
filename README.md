@@ -6,7 +6,7 @@ svAi is a lightweight SystemVerilog workflow app for Windows:
 - Verilator + make build pipeline
 - FST waves + GTKWave launch
 
-> Status: active development. No public demo yet.
+> Status: active development.
 
 ---
 
