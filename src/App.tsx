@@ -255,6 +255,8 @@ export default function App() {
   const [dragging, setDragging] = useState<boolean>(false);
   const dragStartRef = useRef<{ x: number; y: number; path: string } | null>(null);
 
+  const [confirmDeletePath, setConfirmDeletePath] = useState<string>("");
+
   const problemsText = useMemo(() => {
     if (!root) return "Open a project to see diagnostics.";
     if (problems.length === 0) return "No problems.";
@@ -1647,6 +1649,33 @@ export default function App() {
     } finally {
       setBusy(false);
       setDragOverPath("");
+    }
+  };
+
+  const deletePath = async (targetRel: string) => {
+    if (!root) return;
+    const target = (targetRel || "").replace(/\\/g, "/");
+    if (!target) return;
+    setBusy(true);
+    setBottomTab("terminal");
+    try {
+      await invoke("project_delete", { root, relPath: target });
+      pushRun({ title: "Delete", output: `Deleted ${target}` });
+
+      const curActive = activeRel;
+      setOpenTabs((prev) => {
+        const remaining = prev.filter((t) => !(t.relPath === target || t.relPath.startsWith(target + "/")));
+        if (curActive === target || curActive.startsWith(target + "/")) {
+          setActiveRel(remaining[0]?.relPath || "");
+        }
+        return remaining;
+      });
+
+      await refreshTree(root);
+    } catch (e: any) {
+      pushRun({ title: "Delete (error)", output: String(e?.message ?? e ?? "") });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -3285,6 +3314,41 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
         </div>
       </div>
 
+      {confirmDeletePath ? (
+        <div
+          className="ctx"
+          style={{ left: "50%", top: 90, width: 420, maxWidth: "calc(100vw - 80px)", transform: "translateX(-50%)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px" }}>
+            <div style={{ fontWeight: 800 }}>Confirm delete</div>
+            <button className="btn" onClick={() => setConfirmDeletePath("") } disabled={busy}>
+              Close
+            </button>
+          </div>
+          <div className="ctx__sep" />
+          <div style={{ padding: 10, display: "grid", gap: 10 }}>
+            <div className="muted">Delete: <span className="mono">{confirmDeletePath}</span></div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn" onClick={() => setConfirmDeletePath("")} disabled={busy}>
+                Cancel
+              </button>
+              <button
+                className="btn danger"
+                onClick={() => {
+                  const target = confirmDeletePath;
+                  setConfirmDeletePath("");
+                  void deletePath(target);
+                }}
+                disabled={busy}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {ctxMenu ? (
         <div className="ctx" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
           <button
@@ -3380,30 +3444,8 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              const target = ctxMenu.path;
-              const ok = window.confirm(`Delete ${target}?`);
-              if (!ok) return;
+              setConfirmDeletePath(ctxMenu.path);
               setCtxMenu(null);
-              void (async () => {
-                try {
-                  await invoke("project_delete", { root, relPath: target });
-                  pushRun({ title: "Delete", output: `Deleted ${target}` });
-
-                  // Close any open tabs that point to the deleted path (or are inside it if it was a folder).
-                  const curActive = activeRel;
-                  setOpenTabs((prev) => {
-                    const remaining = prev.filter((t) => !(t.relPath === target || t.relPath.startsWith(target + "/")));
-                    if (curActive === target || curActive.startsWith(target + "/")) {
-                      setActiveRel(remaining[0]?.relPath || "");
-                    }
-                    return remaining;
-                  });
-
-                  await refreshTree(root);
-                } catch (e: any) {
-                  pushRun({ title: "Delete (error)", output: String(e ?? "") });
-                }
-              })();
             }}
           >
             Delete
