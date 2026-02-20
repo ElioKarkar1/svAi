@@ -1162,6 +1162,7 @@ export default function App() {
     setAiMessages(nextMsgs);
     setAiInput("");
     setBusy(true);
+    setAiJobBusy(true);
     setAiOpen(true);
     setBottomTab("terminal");
     try {
@@ -1182,6 +1183,7 @@ export default function App() {
       pushRun({ title: "AI (error)", output: String(e ?? "") });
     } finally {
       setBusy(false);
+      setAiJobBusy(false);
     }
   };
 
