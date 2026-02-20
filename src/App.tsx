@@ -444,6 +444,9 @@ export default function App() {
 
   type SvPort = { dir: "input" | "output" | "inout"; name: string; decl: string };
 
+  const [aiJobBusy, setAiJobBusy] = useState<boolean>(false);
+  const aiJobIdRef = useRef<string>("");
+
   const stripSvComments = (s: string): string => {
     const noLine = (s || "").replace(/\/\/.*$/gm, "");
     // naive block comment removal
@@ -479,21 +482,42 @@ export default function App() {
     const m = txt.match(modRe);
     if (!m || m.index == null) return [];
     const after = txt.slice(m.index);
-    const open = after.indexOf("(");
-    if (open < 0) return [];
-    // find matching ')'
-    let i = open + 1;
-    let depth = 1;
-    for (; i < after.length; i++) {
-      const ch = after[i];
-      if (ch === "(") depth++;
-      else if (ch === ")") {
-        depth--;
-        if (depth === 0) break;
+
+    const findMatchingParen = (s: string, openIdx: number): number => {
+      let depth = 0;
+      for (let i = openIdx; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === "(") depth++;
+        else if (ch === ")") {
+          depth--;
+          if (depth === 0) return i;
+        }
+      }
+      return -1;
+    };
+
+    // Handle optional parameter list: module name #(...) (...)
+    let idx = 0;
+    const firstOpen = after.indexOf("(");
+    if (firstOpen < 0) return [];
+
+    // If there's a # before the first '(', it's likely `#(...)` params.
+    const hashIdx = after.indexOf("#");
+    if (hashIdx >= 0 && hashIdx < firstOpen) {
+      const paramOpen = after.indexOf("(", hashIdx);
+      if (paramOpen >= 0) {
+        const paramClose = findMatchingParen(after, paramOpen);
+        if (paramClose > paramOpen) {
+          idx = after.indexOf("(", paramClose);
+        }
       }
     }
-    if (depth !== 0) return [];
-    const portBlock = after.slice(open + 1, i);
+
+    const open = idx > 0 ? idx : firstOpen;
+    if (open < 0) return [];
+    const close = findMatchingParen(after, open);
+    if (close < 0) return [];
+    const portBlock = after.slice(open + 1, close);
 
     const rawItems = splitTopLevelCommas(portBlock);
     const ports: SvPort[] = [];
@@ -2019,10 +2043,18 @@ export default function App() {
                     if (fromTab) {
                       dutText = fromTab;
                     } else {
+                      // Prefer rtl/<dut>.sv, otherwise find any matching file in the project tree.
                       try {
                         dutText = (await invoke("project_read_file", { root, relPath: `rtl/${dut}.sv` })) as string;
                       } catch {
-                        // ignore
+                        const hit = nodes.find((n) => !n.is_dir && (n.name || "").toLowerCase() === `${dut}.sv`.toLowerCase());
+                        if (hit?.path) {
+                          try {
+                            dutText = (await invoke("project_read_file", { root, relPath: hit.path })) as string;
+                          } catch {
+                            // ignore
+                          }
+                        }
                       }
                     }
 
@@ -2046,9 +2078,12 @@ export default function App() {
                       `The content MUST end with a trailing newline.\n`;
 
                     // Call the model without polluting chat history; apply immediately.
+                    // Use a separate AI job busy flag so other UI actions don't clobber the state.
+                    const jobId = nowId();
+                    aiJobIdRef.current = jobId;
                     setAiApplyStatus(`Generating testbench… (${rel})`);
                     setAiApplyDetails("");
-                    setBusy(true);
+                    setAiJobBusy(true);
                     setAiOpen(true);
                     setBottomTab("terminal");
                     try {
@@ -2061,6 +2096,7 @@ export default function App() {
                       })) as AiChatResult;
 
                       const reply = (res.output || "").trim();
+                      if (aiJobIdRef.current !== jobId) return;
                       setAiApplyDetails(reply);
 
                       const parsed = tryParseJsonAny(reply);
@@ -2080,13 +2116,15 @@ export default function App() {
                       await applyOpsDirect(ops, { title: "Testbench", defaultOverwrite: true, allowCreateSuffixPrompt: false });
                       await maybeUpdateFilelist(rel);
                       await invoke("project_set_top", { root, top: tbName });
+                      if (aiJobIdRef.current !== jobId) return;
                       setAiApplyStatus(`Testbench generated: ${rel}`);
                     } catch (e: any) {
                       const msg = String(e?.message ?? e ?? "");
+                      if (aiJobIdRef.current !== jobId) return;
                       setAiApplyStatus(`Testbench error: ${msg}`);
                       pushRun({ title: "Testbench (error)", output: msg });
                     } finally {
-                      setBusy(false);
+                      if (aiJobIdRef.current === jobId) setAiJobBusy(false);
                     }
                   })();
                 }}
@@ -3121,7 +3159,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
               })
             )}
 
-            {busy ? (
+            {busy || aiJobBusy ? (
               <div className="aiMsg aiMsg--assistant aiMsg--thinking">
                 <div className="aiMsg__role">assistant</div>
                 <div className="aiMsg__content">
