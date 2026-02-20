@@ -1834,7 +1834,16 @@ export default function App() {
             Run
           </button>
 
-          <details className="menu" ref={buildMenuRef}>
+          <details
+            className="menu"
+            ref={buildMenuRef}
+            onToggle={() => {
+              if (!buildMenuRef.current?.open) return;
+              if (filesMenuRef.current) filesMenuRef.current.open = false;
+              if (projectMenuRef.current) projectMenuRef.current.open = false;
+              if (toolsMenuRef.current) toolsMenuRef.current.open = false;
+            }}
+          >
             <summary className="btn">Build ▾</summary>
             <div className="menu__panel">
               <button
@@ -1938,7 +1947,16 @@ export default function App() {
             </div>
           </details>
 
-          <details className="menu" ref={filesMenuRef}>
+          <details
+            className="menu"
+            ref={filesMenuRef}
+            onToggle={() => {
+              if (!filesMenuRef.current?.open) return;
+              if (buildMenuRef.current) buildMenuRef.current.open = false;
+              if (projectMenuRef.current) projectMenuRef.current.open = false;
+              if (toolsMenuRef.current) toolsMenuRef.current.open = false;
+            }}
+          >
             <summary className="btn">Files ▾</summary>
             <div className="menu__panel">
               <button
@@ -2175,7 +2193,16 @@ export default function App() {
             </div>
           </details>
 
-          <details className="menu" ref={projectMenuRef}>
+          <details
+            className="menu"
+            ref={projectMenuRef}
+            onToggle={() => {
+              if (!projectMenuRef.current?.open) return;
+              if (buildMenuRef.current) buildMenuRef.current.open = false;
+              if (filesMenuRef.current) filesMenuRef.current.open = false;
+              if (toolsMenuRef.current) toolsMenuRef.current.open = false;
+            }}
+          >
             <summary className="btn">Project ▾</summary>
             <div className="menu__panel">
               <button
@@ -2288,7 +2315,16 @@ export default function App() {
             </div>
           </details>
 
-          <details className="menu" ref={toolsMenuRef}>
+          <details
+            className="menu"
+            ref={toolsMenuRef}
+            onToggle={() => {
+              if (!toolsMenuRef.current?.open) return;
+              if (buildMenuRef.current) buildMenuRef.current.open = false;
+              if (filesMenuRef.current) filesMenuRef.current.open = false;
+              if (projectMenuRef.current) projectMenuRef.current.open = false;
+            }}
+          >
             <summary className={"btn pill " + (toolchain?.ok && toolchain?.make_ok ? "pill--ok" : "pill--bad")}>
               Tools ▾
             </summary>
