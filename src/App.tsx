@@ -1275,6 +1275,17 @@ export default function App() {
     }
   };
 
+  const refreshTops = async (r?: string) => {
+    const rr = (r || root || "").trim();
+    if (!rr) return;
+    try {
+      const t = (await invoke("project_detect_tops", { root: rr })) as TopDetectResult;
+      setTopCandidates(t.candidates || []);
+    } catch {
+      // ignore
+    }
+  };
+
   const applyProjectSetupWizard = async () => {
     if (!root) return;
     setBusy(true);
@@ -1304,12 +1315,7 @@ export default function App() {
       } catch {
         // ignore
       }
-      try {
-        const t = (await invoke("project_detect_tops", { root })) as TopDetectResult;
-        setTopCandidates(t.candidates || []);
-      } catch {
-        // ignore
-      }
+      await refreshTops(root);
 
       setProjectSetupOpen(false);
     } catch (e: any) {
@@ -2273,6 +2279,7 @@ export default function App() {
                       await applyOpsDirect(ops, { title: "Testbench", defaultOverwrite: true, allowCreateSuffixPrompt: false });
                       await maybeUpdateFilelist(rel);
                       await invoke("project_set_top", { root, top: tbName });
+                      await refreshTops(root);
                       if (aiJobIdRef.current !== jobId) return;
                       setAiApplyStatus(`Testbench generated: ${rel}`);
                     } catch (e: any) {
@@ -2350,7 +2357,22 @@ export default function App() {
               </button>
 
               <div className="menu__group">
-                <div className="menu__label">Top module</div>
+                <div className="menu__label" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>Top module</span>
+                  <button
+                    className="btn"
+                    style={{ padding: "2px 8px" }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void refreshTops(root);
+                    }}
+                    disabled={busy || !root}
+                    title="Refresh top candidates"
+                  >
+                    ↻
+                  </button>
+                </div>
                 <select
                   className="menu__select"
                   value={topValue}
@@ -2389,6 +2411,38 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+
+                <button
+                  className="menu__item"
+                  onClick={() => {
+                    closeMenus();
+                    void (async () => {
+                      if (!root) return;
+                      const nextTop = (window.prompt("Set top module (manual)", topValue || "") || "").trim();
+                      if (!nextTop) return;
+                      const dirtyCount = openTabs.filter((t) => t.dirty).length;
+                      if (dirtyCount > 0) {
+                        const ok = window.confirm(`You have ${dirtyCount} unsaved file(s).\n\nChange top to ${nextTop}?`);
+                        if (!ok) return;
+                      }
+                      setTopValue(nextTop);
+                      setBusy(true);
+                      try {
+                        await invoke("project_set_top", { root, top: nextTop });
+                        try { localStorage.setItem(lsTopKey(root), nextTop); } catch {}
+                        pushRun({ title: "Set Top", output: `Top module set to: ${nextTop}` });
+                      } catch (e: any) {
+                        pushRun({ title: "Set Top (error)", output: String(e ?? "") });
+                      } finally {
+                        setBusy(false);
+                        setPhase("idle");
+                      }
+                    })();
+                  }}
+                  disabled={busy || !root}
+                >
+                  Set top…
+                </button>
               </div>
 
               <button
