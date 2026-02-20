@@ -2001,7 +2001,17 @@ export default function App() {
                     const dut = (window.prompt("DUT module name", guess) || "").trim();
                     if (!dut) return;
                     const tbName = `tb_${dut}`;
-                    const rel = `tb/${tbName}.sv`;
+                    let rel = `tb/${tbName}.sv`;
+                    try {
+                      const hasTb = (await invoke("project_exists", { root, relPath: "tb" })) as boolean;
+                      if (!hasTb) {
+                        const picked = (window.prompt("No tb/ folder found. Where should the testbench go? (relative path)", rel) || "").trim();
+                        if (!picked) return;
+                        rel = picked.replace(/\\/g, "/");
+                      }
+                    } catch {
+                      // ignore
+                    }
 
                     // Build a deterministic skeleton (ports + instantiation) to ground the model.
                     let dutText = "";
@@ -2054,12 +2064,21 @@ export default function App() {
                       setAiApplyDetails(reply);
 
                       const parsed = tryParseJsonAny(reply);
-                      const ops = extractAiOps(parsed) || [];
+                      let ops = extractAiOps(parsed) || [];
                       if (!ops.length) {
                         throw new Error("AI did not return JSON ops.");
                       }
 
+                      // Force any write_file/create_file ops to land at our chosen rel path.
+                      ops = ops.map((o: any) => {
+                        if (o && (o.op === "write_file" || o.op === "create_file")) {
+                          return { ...o, file: rel };
+                        }
+                        return o;
+                      });
+
                       await applyOpsDirect(ops, { title: "Testbench", defaultOverwrite: true, allowCreateSuffixPrompt: false });
+                      await maybeUpdateFilelist(rel);
                       await invoke("project_set_top", { root, top: tbName });
                       setAiApplyStatus(`Testbench generated: ${rel}`);
                     } catch (e: any) {
