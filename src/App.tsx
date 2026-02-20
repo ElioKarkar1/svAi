@@ -1261,7 +1261,6 @@ export default function App() {
     const nextMsgs: AiMessage[] = [...aiMessages, { role: "user", content }];
     setAiMessages(nextMsgs);
     setAiInput("");
-    setBusy(true);
     setAiJobBusy(true);
     setAiOpen(true);
     setBottomTab("terminal");
@@ -1282,7 +1281,6 @@ export default function App() {
     } catch (e: any) {
       pushRun({ title: "AI (error)", output: String(e ?? "") });
     } finally {
-      setBusy(false);
       setAiJobBusy(false);
     }
   };
@@ -3487,7 +3485,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
 
                     {m.role === "assistant" && tryExtractCodeBlock(m.content) && !looksLikeDiff(tryExtractCodeBlock(m.content) || "") ? (
                       <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                        <button className="btn" onClick={() => void createFileFromAssistant(idx)} disabled={busy || !root}>
+                        <button className="btn" onClick={() => void createFileFromAssistant(idx)} disabled={busy || aiJobBusy || !root}>
                           Create file…
                         </button>
                       </div>
@@ -3495,7 +3493,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
 
                     {patch ? (
                       <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                        <button className="btn primary" onClick={() => void applyAssistantAuto(idx)} disabled={busy || !root}>
+                        <button className="btn primary" onClick={() => void applyAssistantAuto(idx)} disabled={busy || aiJobBusy || !root}>
                           Review + Apply…
                         </button>
                       </div>
@@ -3521,7 +3519,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
               value={aiInput}
               onChange={(e) => setAiInput(e.target.value)}
               placeholder={root ? "Ask svAi…" : "Open a project first…"}
-              disabled={busy || !root}
+              disabled={aiJobBusy || !root}
               rows={3}
               onContextMenu={(e) => {
                 // Provide a reliable context menu (WebView2 sometimes doesn't show native menus).
@@ -3539,7 +3537,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
             />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
               <div className="muted">Enter to send · Shift+Enter for newline</div>
-              <button className="btn primary" onClick={() => void aiSend(aiInput)} disabled={busy || !root || !aiInput.trim()}>
+              <button className="btn primary" onClick={() => void aiSend(aiInput)} disabled={aiJobBusy || !root || !aiInput.trim()}>
                 Send
               </button>
             </div>
