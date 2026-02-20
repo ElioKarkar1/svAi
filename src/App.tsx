@@ -942,6 +942,43 @@ export default function App() {
     setAiReviewPreview(previews);
   };
 
+  const rewriteFileFromPatchViaAi = async (targetRel: string, patchText: string) => {
+    if (!root) return;
+    const file = (targetRel || "").replace(/\\/g, "/");
+    const cur = (await invoke("project_read_file", { root, relPath: file })) as string;
+
+    const prompt =
+      `For file ${file}: apply the following unified diff to the CURRENT file contents and output the COMPLETE updated file contents ONLY in a single fenced code block. ` +
+      `Do not output a diff. Do not add explanations.\n\n` +
+      `CURRENT FILE:\n\n\`\`\`systemverilog\n${cur}\n\`\`\`\n\n` +
+      `DIFF:\n\n\`\`\`diff\n${patchText}\n\`\`\`\n`;
+
+    const res = (await invoke("ai_chat", {
+      root,
+      provider: aiProvider,
+      messages: [...aiMessages, { role: "user", content: prompt }],
+      includeProject: aiIncludeProject,
+    })) as AiChatResult;
+
+    const reply = (res.output || "").trim();
+    setAiApplyDetails(reply);
+
+    let newFile = tryExtractCodeBlock(reply);
+    if (!newFile) throw new Error("AI rewrite did not return a code block.");
+    if (looksLikeDiff(newFile)) {
+      newFile = stripLeadingDiffMarkers(newFile);
+    }
+    if (looksLikeDiff(newFile)) throw new Error("AI rewrite returned a diff.");
+
+    newFile = ensureTrailingNewline(newFile);
+    await invoke("project_write_file", { root, relPath: file, content: newFile });
+
+    // Update open tabs if needed
+    if (openTabs.find((t) => t.relPath === file)) {
+      setOpenTabs((prev) => prev.map((t) => (t.relPath === file ? { ...t, value: newFile, dirty: false } : t)));
+    }
+  };
+
   const applyOpsDirect = async (
     ops: AiFileOp[],
     opts?: { allowCreateSuffixPrompt?: boolean; defaultOverwrite?: boolean; title?: string }
@@ -961,8 +998,15 @@ export default function App() {
         if (anyOp.op === "apply_diff") {
           const exists = (await invoke("project_exists", { root, relPath: file })) as boolean;
           if (exists) {
-            await invoke("project_apply_patch", { root, patch: anyOp.patch });
-            pushRun({ title: opts?.title || "AI", output: `Patched: ${file}` });
+            try {
+              await invoke("project_apply_patch", { root, patch: anyOp.patch });
+              pushRun({ title: opts?.title || "AI", output: `Patched: ${file}` });
+            } catch (e: any) {
+              // Fallback: ask AI for a full-file rewrite and write it.
+              pushRun({ title: opts?.title || "AI", output: `Patch failed; rewriting full file: ${file}` });
+              await rewriteFileFromPatchViaAi(file, anyOp.patch || "");
+              pushRun({ title: opts?.title || "AI", output: `Rewrote: ${file}` });
+            }
           } else {
             let content = stripLeadingDiffMarkers(anyOp.patch || "");
             content = ensureTrailingNewline(content);
