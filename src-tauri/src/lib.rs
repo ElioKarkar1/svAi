@@ -599,6 +599,7 @@ fn load_or_init_config(root: &Path) -> Result<SvlabConfig, String> {
             cfg.verilator_args = vec![
                 "--sv".to_string(),
                 "-Wall".to_string(),
+                "-Wno-fatal".to_string(),
                 "--timing".to_string(),
             ];
         }
@@ -608,6 +609,15 @@ fn load_or_init_config(root: &Path) -> Result<SvlabConfig, String> {
             .any(|x| x == "--timing" || x == "--no-timing")
         {
             cfg.verilator_args.push("--timing".to_string());
+        }
+
+        // Don't exit non-zero for warnings by default.
+        if !cfg
+            .verilator_args
+            .iter()
+            .any(|x| x == "-Wno-fatal" || x == "--Wno-fatal")
+        {
+            cfg.verilator_args.push("-Wno-fatal".to_string());
         }
         if cfg.max_time == 0 {
             cfg.max_time = 200000;
