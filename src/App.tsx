@@ -1986,71 +1986,7 @@ export default function App() {
                     const tbName = `tb_${dut}`;
                     const rel = `tb/${tbName}.sv`;
 
-                    // Try to parse DUT ports from an open tab or from rtl/<dut>.sv.
-                    let dutText = "";
-                    const fromTab = openTabs.find((t) => t.relPath.endsWith(`/${dut}.sv`) || t.title === `${dut}.sv`)?.value;
-                    if (fromTab) {
-                      dutText = fromTab;
-                    } else {
-                      try {
-                        dutText = (await invoke("project_read_file", { root, relPath: `rtl/${dut}.sv` })) as string;
-                      } catch {
-                        // ignore
-                      }
-                    }
-
-                    const ports = dutText ? parseModulePorts(dutText, dut) : [];
-                    const template = ports.length ? genTbFromPorts(dut, ports) : ensureTrailingNewline(
-                      `\`timescale 1ns/1ps\n\nmodule ${tbName}();\n  // TODO: declare signals + instantiate DUT (${dut})\n\n  logic clk = 0;\n  always #5 clk = ~clk;\n\n  initial begin\n    $display(\"svAi: TODO write stimulus\");\n    #100;\n    $finish;\n  end\nendmodule\n`
-                    );
-
-                    const exists = (await invoke("project_exists", { root, relPath: rel })) as boolean;
-                    let finalPath = rel;
-                    if (exists) {
-                      const okOverwrite = window.confirm(`File already exists: ${rel}\n\nOK = overwrite\nCancel = create copy with suffix`);
-                      if (!okOverwrite) {
-                        let k = 2;
-                        while (k < 50) {
-                          const cand = nextSuffixPath(rel, k);
-                          const candExists = (await invoke("project_exists", { root, relPath: cand })) as boolean;
-                          if (!candExists) {
-                            finalPath = cand;
-                            break;
-                          }
-                          k += 1;
-                        }
-                      }
-                    }
-
-                    await invoke("project_write_file", { root, relPath: finalPath, content: template });
-                    await maybeUpdateFilelist(finalPath);
-                    await invoke("project_set_top", { root, top: tbName });
-                    pushRun({ title: "Testbench", output: `Created ${finalPath} (top=${tbName})` });
-                    await refreshTree(root);
-                    await openFile(finalPath);
-                  })();
-                }}
-                disabled={busy || !root}
-              >
-                Create Testbench…
-              </button>
-
-              <button
-                className="menu__item"
-                onClick={() => {
-                  closeMenus();
-                  void (async () => {
-                    if (!root) return;
-                    const guess = (() => {
-                      const txt = activeTab?.value || "";
-                      const m = txt.match(/\bmodule\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
-                      return (m?.[1] || "").trim() || "top";
-                    })();
-                    const dut = (window.prompt("DUT module name", guess) || "").trim();
-                    if (!dut) return;
-                    const tbName = `tb_${dut}`;
-                    const rel = `tb/${tbName}.sv`;
-
+                    // Build a deterministic skeleton (ports + instantiation) to ground the model.
                     let dutText = "";
                     const fromTab = openTabs.find((t) => t.relPath.endsWith(`/${dut}.sv`) || t.title === `${dut}.sv`)?.value;
                     if (fromTab) {
@@ -2087,7 +2023,7 @@ export default function App() {
                 }}
                 disabled={busy || !root}
               >
-                Create Testbench (AI)…
+                Create Testbench…
               </button>
             </div>
           </details>
