@@ -250,6 +250,9 @@ export default function App() {
   const toolsMenuRef = useRef<HTMLDetailsElement | null>(null);
 
   const [ctxMenu, setCtxMenu] = useState<CtxMenu>(null);
+  const [textCtxMenu, setTextCtxMenu] = useState<{ x: number; y: number; kind: "textarea" | "input" } | null>(null);
+  const textCtxTargetRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+
   const [dragOverPath, setDragOverPath] = useState<string>("");
   const [dragFromPath, setDragFromPath] = useState<string>("");
   const [dragging, setDragging] = useState<boolean>(false);
@@ -300,6 +303,59 @@ export default function App() {
     if (filesMenuRef.current) filesMenuRef.current.open = false;
     if (projectMenuRef.current) projectMenuRef.current.open = false;
     if (toolsMenuRef.current) toolsMenuRef.current.open = false;
+  };
+
+  const closeTextCtxMenu = () => {
+    setTextCtxMenu(null);
+    textCtxTargetRef.current = null;
+  };
+
+  const textCtxDo = async (action: "cut" | "copy" | "paste" | "selectAll") => {
+    const el = textCtxTargetRef.current;
+    if (!el) return;
+    el.focus();
+
+    if (action === "selectAll") {
+      el.select();
+      return;
+    }
+
+    if (action === "copy") {
+      try {
+        const sel = (el.value || "").slice(el.selectionStart ?? 0, el.selectionEnd ?? 0);
+        await navigator.clipboard.writeText(sel);
+      } catch {
+        document.execCommand("copy");
+      }
+      return;
+    }
+
+    if (action === "cut") {
+      try {
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? 0;
+        const sel = (el.value || "").slice(start, end);
+        await navigator.clipboard.writeText(sel);
+        el.setRangeText("", start, end, "start");
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch {
+        document.execCommand("cut");
+      }
+      return;
+    }
+
+    if (action === "paste") {
+      try {
+        const txt = await navigator.clipboard.readText();
+        const start = el.selectionStart ?? 0;
+        const end = el.selectionEnd ?? 0;
+        el.setRangeText(txt, start, end, "end");
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch {
+        // If clipboard read is blocked, user can still Ctrl+V.
+      }
+      return;
+    }
   };
 
   useEffect(() => {
@@ -1676,10 +1732,25 @@ export default function App() {
       }
       if (e.key === "Escape") {
         setCtxMenu(null);
+        closeTextCtxMenu();
+        setConfirmDeletePath("");
+        closeMenus();
       }
     };
 
-    const onClick = () => setCtxMenu(null);
+    const onClick = (ev: MouseEvent) => {
+      setCtxMenu(null);
+      closeTextCtxMenu();
+
+      // Click outside any open top menu closes it.
+      const t = ev.target as any;
+      const inMenu =
+        (buildMenuRef.current && buildMenuRef.current.contains(t)) ||
+        (filesMenuRef.current && filesMenuRef.current.contains(t)) ||
+        (projectMenuRef.current && projectMenuRef.current.contains(t)) ||
+        (toolsMenuRef.current && toolsMenuRef.current.contains(t));
+      if (!inMenu) closeMenus();
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener("click", onClick);
     return () => {
@@ -3452,6 +3523,12 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
               placeholder={root ? "Ask svAi…" : "Open a project first…"}
               disabled={busy || !root}
               rows={3}
+              onContextMenu={(e) => {
+                // Provide a reliable context menu (WebView2 sometimes doesn't show native menus).
+                e.preventDefault();
+                textCtxTargetRef.current = e.currentTarget;
+                setTextCtxMenu({ x: e.clientX, y: e.clientY, kind: "textarea" });
+              }}
               onKeyDown={(e) => {
                 if (e.key !== "Enter") return;
                 // Enter sends; Shift+Enter inserts newline
@@ -3516,6 +3593,48 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {textCtxMenu ? (
+        <div className="ctx" style={{ left: textCtxMenu.x, top: textCtxMenu.y }}>
+          <button
+            className="ctx__item"
+            onClick={() => {
+              void textCtxDo("cut");
+              closeTextCtxMenu();
+            }}
+          >
+            Cut
+          </button>
+          <button
+            className="ctx__item"
+            onClick={() => {
+              void textCtxDo("copy");
+              closeTextCtxMenu();
+            }}
+          >
+            Copy
+          </button>
+          <button
+            className="ctx__item"
+            onClick={() => {
+              void textCtxDo("paste");
+              closeTextCtxMenu();
+            }}
+          >
+            Paste
+          </button>
+          <div className="ctx__sep" />
+          <button
+            className="ctx__item"
+            onClick={() => {
+              void textCtxDo("selectAll");
+              closeTextCtxMenu();
+            }}
+          >
+            Select all
+          </button>
         </div>
       ) : null}
 
