@@ -855,21 +855,19 @@ export default function App() {
     setAiReviewPreview(previews);
   };
 
-  const applyAiOps = async () => {
+  const applyOpsDirect = async (
+    ops: AiFileOp[],
+    opts?: { allowCreateSuffixPrompt?: boolean; defaultOverwrite?: boolean; title?: string }
+  ) => {
     if (!root) return;
-    const selected = aiReviewOps
-      .map((op, i) => ({ op, i }))
-      .filter(({ i }) => aiReviewChecks[i]);
-    if (selected.length === 0) {
-      setAiReviewOpen(false);
-      return;
-    }
+    const allowCreateSuffixPrompt = opts?.allowCreateSuffixPrompt ?? true;
+    const defaultOverwrite = opts?.defaultOverwrite ?? false;
 
     setBusy(true);
     setBottomTab("terminal");
     try {
-      for (const { op, i } of selected) {
-        const anyOp: any = op as any;
+      for (let i = 0; i < ops.length; i++) {
+        const anyOp: any = ops[i] as any;
         const file = (anyOp.file || "").toString().replace(/\\/g, "/");
         if (!file || isBlockedRelPath(file)) throw new Error(`Invalid/blocked path: ${file}`);
 
@@ -877,13 +875,13 @@ export default function App() {
           const exists = (await invoke("project_exists", { root, relPath: file })) as boolean;
           if (exists) {
             await invoke("project_apply_patch", { root, patch: anyOp.patch });
-            pushRun({ title: "AI", output: `Patched: ${file}` });
+            pushRun({ title: opts?.title || "AI", output: `Patched: ${file}` });
           } else {
             let content = stripLeadingDiffMarkers(anyOp.patch || "");
             content = ensureTrailingNewline(content);
             await invoke("project_write_file", { root, relPath: file, content });
             await maybeUpdateFilelist(file);
-            pushRun({ title: "AI", output: `Created: ${file}` });
+            pushRun({ title: opts?.title || "AI", output: `Created: ${file}` });
           }
           continue;
         }
@@ -896,7 +894,7 @@ export default function App() {
           if (hits !== 1) throw new Error(`Edit did not apply cleanly (find hits=${hits}) in ${file}`);
           const updated = current.replace(find, replace);
           await invoke("project_write_file", { root, relPath: file, content: updated });
-          pushRun({ title: "AI", output: `Patched: ${file}` });
+          pushRun({ title: opts?.title || "AI", output: `Patched: ${file}` });
           continue;
         }
 
@@ -907,38 +905,57 @@ export default function App() {
 
           const exists = (await invoke("project_exists", { root, relPath: file })) as boolean;
           let finalPath = file;
+
           if (exists && anyOp.op === "create_file") {
-            const okOverwrite = window.confirm(`File already exists: ${file}\n\nOK = overwrite\nCancel = create copy with suffix`);
-            if (!okOverwrite) {
-              let k = 2;
-              while (k < 50) {
-                const cand = nextSuffixPath(file, k);
-                const candExists = (await invoke("project_exists", { root, relPath: cand })) as boolean;
-                if (!candExists) {
-                  finalPath = cand;
-                  break;
+            if (defaultOverwrite) {
+              // leave finalPath as-is
+            } else if (allowCreateSuffixPrompt) {
+              const okOverwrite = window.confirm(`File already exists: ${file}\n\nOK = overwrite\nCancel = create copy with suffix`);
+              if (!okOverwrite) {
+                let k = 2;
+                while (k < 50) {
+                  const cand = nextSuffixPath(file, k);
+                  const candExists = (await invoke("project_exists", { root, relPath: cand })) as boolean;
+                  if (!candExists) {
+                    finalPath = cand;
+                    break;
+                  }
+                  k += 1;
                 }
-                k += 1;
               }
             }
           }
 
           await invoke("project_write_file", { root, relPath: finalPath, content });
           await maybeUpdateFilelist(finalPath);
-          pushRun({ title: "AI", output: `${exists ? "Wrote" : "Created"}: ${finalPath}` });
+          pushRun({ title: opts?.title || "AI", output: `${exists ? "Wrote" : "Created"}: ${finalPath}` });
           continue;
         }
 
-        pushRun({ title: "AI", output: `Skipped unknown op at index ${i}` });
+        pushRun({ title: opts?.title || "AI", output: `Skipped unknown op at index ${i}` });
       }
 
       await refreshTree(root);
     } catch (e: any) {
-      pushRun({ title: "AI (error)", output: String(e?.message ?? e ?? "") });
+      pushRun({ title: `${opts?.title || "AI"} (error)`, output: String(e?.message ?? e ?? "") });
     } finally {
       setBusy(false);
-      setAiReviewOpen(false);
     }
+  };
+
+  const applyAiOps = async () => {
+    if (!root) return;
+    const selected = aiReviewOps
+      .map((op, i) => ({ op, i }))
+      .filter(({ i }) => aiReviewChecks[i])
+      .map(({ op }) => op);
+    if (selected.length === 0) {
+      setAiReviewOpen(false);
+      return;
+    }
+
+    await applyOpsDirect(selected, { title: "AI" });
+    setAiReviewOpen(false);
   };
 
   const applyAssistantAuto = async (assistantIndex: number) => {
@@ -2018,7 +2035,40 @@ export default function App() {
                       `Schema: {"ops":[{"op":"write_file","file":"${rel}","content":"...full tb file..."}]}.\n` +
                       `The content MUST end with a trailing newline.\n`;
 
-                    await aiSend(prompt);
+                    // Call the model without polluting chat history; apply immediately.
+                    setAiApplyStatus(`Generating testbench… (${rel})`);
+                    setAiApplyDetails("");
+                    setBusy(true);
+                    setAiOpen(true);
+                    setBottomTab("terminal");
+                    try {
+                      const messagesForModel: AiMessage[] = [...aiMessages, { role: "user", content: prompt }];
+                      const res = (await invoke("ai_chat", {
+                        root,
+                        provider: aiProvider,
+                        messages: messagesForModel,
+                        includeProject: aiIncludeProject,
+                      })) as AiChatResult;
+
+                      const reply = (res.output || "").trim();
+                      setAiApplyDetails(reply);
+
+                      const parsed = tryParseJsonAny(reply);
+                      const ops = extractAiOps(parsed) || [];
+                      if (!ops.length) {
+                        throw new Error("AI did not return JSON ops.");
+                      }
+
+                      await applyOpsDirect(ops, { title: "Testbench", defaultOverwrite: true, allowCreateSuffixPrompt: false });
+                      await invoke("project_set_top", { root, top: tbName });
+                      setAiApplyStatus(`Testbench generated: ${rel}`);
+                    } catch (e: any) {
+                      const msg = String(e?.message ?? e ?? "");
+                      setAiApplyStatus(`Testbench error: ${msg}`);
+                      pushRun({ title: "Testbench (error)", output: msg });
+                    } finally {
+                      setBusy(false);
+                    }
                   })();
                 }}
                 disabled={busy || !root}
