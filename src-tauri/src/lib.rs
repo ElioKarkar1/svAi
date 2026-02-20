@@ -1173,6 +1173,72 @@ fn gather_project_text(root: &Path, max_files: usize, max_chars: usize) -> Resul
     out.push_str(&serde_json::to_string_pretty(&cfg).unwrap_or_default());
     out.push_str("\n\n");
 
+    // Optional: include local knowledge pack snippets (project root /svai_knowledge)
+    let knowledge_root = root.join("svai_knowledge");
+    if knowledge_root.is_dir() {
+        out.push_str("## svai_knowledge (local notes + templates)\n");
+        out.push_str("(Files under svai_knowledge/ are treated as extra context: style notes, templates, conventions.)\n\n");
+
+        let mut know_rels: Vec<String> = vec![];
+        for ent in walkdir::WalkDir::new(&knowledge_root)
+            .follow_links(false)
+            .max_depth(4)
+            .into_iter()
+            .flatten()
+        {
+            if !ent.file_type().is_file() {
+                continue;
+            }
+            let p = ent.path();
+            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+            // keep to small text-ish files
+            let ok = ext.eq_ignore_ascii_case("md")
+                || ext.eq_ignore_ascii_case("txt")
+                || ext.eq_ignore_ascii_case("sv")
+                || ext.eq_ignore_ascii_case("svh")
+                || ext.eq_ignore_ascii_case("v")
+                || ext.eq_ignore_ascii_case("json");
+            if !ok {
+                continue;
+            }
+            if let Some(r) = relpath_from_root(root, p) {
+                know_rels.push(r);
+            }
+        }
+        know_rels.sort();
+        know_rels.dedup();
+
+        let mut kcount = 0usize;
+        for rel in know_rels {
+            if kcount >= 25 {
+                break;
+            }
+            let p = root.join(&rel);
+            if !p.exists() {
+                continue;
+            }
+            let Ok(txt) = fs::read_to_string(&p) else {
+                continue;
+            };
+            if txt.len() > 60_000 {
+                continue;
+            }
+            let lang = if rel.ends_with(".md") || rel.ends_with(".txt") {
+                "text"
+            } else {
+                "systemverilog"
+            };
+            let chunk = format!("\n\n### Knowledge: {}\n```{}\n{}\n```\n", rel, lang, txt);
+            if out.len() + chunk.len() > max_chars {
+                break;
+            }
+            out.push_str(&chunk);
+            kcount += 1;
+        }
+
+        out.push_str("\n\n");
+    }
+
     let mut count = 0usize;
     for rel in rels {
         if count >= max_files {

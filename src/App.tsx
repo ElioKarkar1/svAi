@@ -915,6 +915,7 @@ export default function App() {
     setAiInput("");
     setBusy(true);
     setAiOpen(true);
+    setBottomTab("terminal");
     try {
       const res = (await invoke("ai_chat", {
         root,
@@ -1776,6 +1777,33 @@ export default function App() {
                 Save All
               </button>
               <div className="ctx__sep" />
+
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  void (async () => {
+                    if (!root) return;
+                    const name = (window.prompt("Module name (optional)", "") || "").trim();
+                    const spec = (window.prompt("Describe what to build (module + optional testbench)", "") || "").trim();
+                    if (!spec) return;
+
+                    const hint = name
+                      ? `Target module name: ${name}. Prefer rtl/${name}.sv and tb/tb_${name}.sv if generating a testbench.`
+                      : "Choose appropriate rtl/ and tb/ paths.";
+
+                    const content =
+                      `Create a SystemVerilog module (and optionally a testbench) based on this spec:\n\n${spec}\n\n${hint}\n\n` +
+                      `Return ONLY JSON {\"ops\":[...]} using create_file/write_file/edit. Include complete file contents in content fields.`;
+
+                    await aiSend(content);
+                  })();
+                }}
+                disabled={busy || !root}
+              >
+                Create Module…
+              </button>
+
               <button
                 className="menu__item"
                 onClick={() => {
