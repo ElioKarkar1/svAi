@@ -2113,6 +2113,7 @@ export default function App() {
                     const prompt =
                       `You are generating a thorough SystemVerilog testbench.\n\n` +
                       `Goal: directed edge-case tests + randomized stimulus (seeded/repeatable) + checks/assertions.\n` +
+                      `Use plain SystemVerilog only (no external testing DSL; do NOT use .should).\n` +
                       `Use assert/$fatal (fail fast). Add a small reference model/scoreboard if feasible.\n\n` +
                       `DUT module name: ${dut}\n` +
                       `Testbench file path: ${rel}\n\n` +
@@ -2167,15 +2168,21 @@ export default function App() {
                       const hasChecks = /\bassert\b|\$fatal\b|\$error\b/i.test(tbContent);
                       const hasDrive = /\n\s*[a-zA-Z_][a-zA-Z0-9_]*\s*<=|\n\s*[a-zA-Z_][a-zA-Z0-9_]*\s*=/.test(tbContent);
                       const stillTodo = /TODO/i.test(tbContent);
+                      const hasShouldDsl = /\.[Ss]hould\b/.test(tbContent);
                       const unchanged = tbContent && skeletonNorm && tbContent === skeletonNorm;
 
-                      if (unchanged || stillTodo || !hasChecks || !hasDrive) {
+                      const needsClock = /\blogic\s+clk\b|\binput\b[^\n]*\bclk\b/i.test(dutText) || /\bclk\b/i.test(skeletonNorm);
+                      const hasClockGen = /always\s*#\s*\d+\s*clk\s*=\s*~clk|always\s*@\([^\)]*\)\s*clk\s*=\s*~clk/i.test(tbContent);
+
+                      if (unchanged || stillTodo || hasShouldDsl || !hasChecks || !hasDrive || (needsClock && !hasClockGen)) {
                         // One retry with stricter instructions.
                         const retryPrompt =
                           prompt +
                           `\n\nSTRICT REQUIREMENTS (must satisfy):\n` +
+                          `- DO NOT use any testing DSL like \'should\' (no .should). Use plain SystemVerilog only.\n` +
                           `- DO NOT return the provided skeleton unchanged.\n` +
-                          `- MUST drive at least 2 DUT inputs with multiple values over time (directed + random).\n` +
+                          `- MUST include clock generation if DUT has a clock (e.g. always #5 clk = ~clk;).\n` +
+                          `- MUST drive DUT inputs over time (directed + random where applicable).\n` +
                           `- MUST include at least 3 checks using assert or $fatal (scoreboard/ref model if possible).\n` +
                           `- Remove all TODOs.\n`;
 
