@@ -161,6 +161,18 @@ button, input, textarea {
   color: rgba(255,255,255,0.86);
   padding: 6px 8px;
   border-radius: 10px;
+  color-scheme: dark;
+}
+
+/* Fix native <select> dropdown (Windows/WebView2) showing light theme options */
+.menu__select option {
+  background: #1a1a1a;
+  color: rgba(255,255,255,0.92);
+}
+
+.menu__select optgroup {
+  background: #1a1a1a;
+  color: rgba(255,255,255,0.75);
 }
 
 .menu__kv {
