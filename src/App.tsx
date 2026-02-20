@@ -3199,7 +3199,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
               })
             )}
 
-            {busy || aiJobBusy ? (
+            {aiJobBusy ? (
               <div className="aiMsg aiMsg--assistant aiMsg--thinking">
                 <div className="aiMsg__role">assistant</div>
                 <div className="aiMsg__content">
@@ -3341,14 +3341,28 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
 
           <button
             className="ctx__item ctx__item--danger"
-            onClick={() => {
-              const ok = window.confirm(`Delete ${ctxMenu.path}?`);
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const target = ctxMenu.path;
+              const ok = window.confirm(`Delete ${target}?`);
               if (!ok) return;
               setCtxMenu(null);
               void (async () => {
                 try {
-                  await invoke("project_delete", { root, relPath: ctxMenu.path });
-                  pushRun({ title: "Delete", output: `Deleted ${ctxMenu.path}` });
+                  await invoke("project_delete", { root, relPath: target });
+                  pushRun({ title: "Delete", output: `Deleted ${target}` });
+
+                  // Close any open tabs that point to the deleted path (or are inside it if it was a folder).
+                  const curActive = activeRel;
+                  setOpenTabs((prev) => {
+                    const remaining = prev.filter((t) => !(t.relPath === target || t.relPath.startsWith(target + "/")));
+                    if (curActive === target || curActive.startsWith(target + "/")) {
+                      setActiveRel(remaining[0]?.relPath || "");
+                    }
+                    return remaining;
+                  });
+
                   await refreshTree(root);
                 } catch (e: any) {
                   pushRun({ title: "Delete (error)", output: String(e ?? "") });
