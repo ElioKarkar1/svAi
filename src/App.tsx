@@ -2034,6 +2034,61 @@ export default function App() {
               >
                 Create Testbench…
               </button>
+
+              <button
+                className="menu__item"
+                onClick={() => {
+                  closeMenus();
+                  void (async () => {
+                    if (!root) return;
+                    const guess = (() => {
+                      const txt = activeTab?.value || "";
+                      const m = txt.match(/\bmodule\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
+                      return (m?.[1] || "").trim() || "top";
+                    })();
+                    const dut = (window.prompt("DUT module name", guess) || "").trim();
+                    if (!dut) return;
+                    const tbName = `tb_${dut}`;
+                    const rel = `tb/${tbName}.sv`;
+
+                    let dutText = "";
+                    const fromTab = openTabs.find((t) => t.relPath.endsWith(`/${dut}.sv`) || t.title === `${dut}.sv`)?.value;
+                    if (fromTab) {
+                      dutText = fromTab;
+                    } else {
+                      try {
+                        dutText = (await invoke("project_read_file", { root, relPath: `rtl/${dut}.sv` })) as string;
+                      } catch {
+                        // ignore
+                      }
+                    }
+
+                    const ports = dutText ? parseModulePorts(dutText, dut) : [];
+                    const skeleton = ports.length ? genTbFromPorts(dut, ports) : ensureTrailingNewline(
+                      `\`timescale 1ns/1ps\n\nmodule ${tbName}();\n  // TODO: declare signals + instantiate DUT (${dut})\n\n  initial begin\n    // TODO: drive inputs and add checks\n    #100;\n    $finish;\n  end\nendmodule\n`
+                    );
+
+                    const prompt =
+                      `You are generating a thorough SystemVerilog testbench.\n\n` +
+                      `Goal: directed edge-case tests + randomized stimulus (seeded/repeatable) + checks/assertions.\n` +
+                      `Use assert/$fatal (fail fast). Add a small reference model/scoreboard if feasible.\n\n` +
+                      `DUT module name: ${dut}\n` +
+                      `Testbench file path: ${rel}\n\n` +
+                      (dutText
+                        ? `DUT source (for ports/behavior):\n\n\`\`\`systemverilog\n${dutText}\n\`\`\`\n\n`
+                        : `DUT source not available; infer from port names and write a generic TB.\n\n`) +
+                      `Starting TB skeleton (you may rewrite completely):\n\n\`\`\`systemverilog\n${skeleton}\n\`\`\`\n\n` +
+                      `Return ONLY JSON, no markdown, no explanation.\n` +
+                      `Schema: {"ops":[{"op":"write_file","file":"${rel}","content":"...full tb file..."}]}.\n` +
+                      `The content MUST end with a trailing newline.\n`;
+
+                    await aiSend(prompt);
+                  })();
+                }}
+                disabled={busy || !root}
+              >
+                Create Testbench (AI)…
+              </button>
             </div>
           </details>
 
