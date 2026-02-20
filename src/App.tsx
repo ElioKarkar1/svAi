@@ -442,6 +442,150 @@ export default function App() {
     return t.endsWith("\n") ? t : t + "\n";
   };
 
+  type SvPort = { dir: "input" | "output" | "inout"; name: string; decl: string };
+
+  const stripSvComments = (s: string): string => {
+    const noLine = (s || "").replace(/\/\/.*$/gm, "");
+    // naive block comment removal
+    return noLine.replace(/\/\*[\s\S]*?\*\//g, "");
+  };
+
+  const splitTopLevelCommas = (s: string): string[] => {
+    const out: string[] = [];
+    let cur = "";
+    let depthParen = 0;
+    let depthBrack = 0;
+    for (const ch of s) {
+      if (ch === "(") depthParen++;
+      else if (ch === ")") depthParen = Math.max(0, depthParen - 1);
+      else if (ch === "[") depthBrack++;
+      else if (ch === "]") depthBrack = Math.max(0, depthBrack - 1);
+      if (ch === "," && depthParen === 0 && depthBrack === 0) {
+        const t = cur.trim();
+        if (t) out.push(t);
+        cur = "";
+        continue;
+      }
+      cur += ch;
+    }
+    const t = cur.trim();
+    if (t) out.push(t);
+    return out;
+  };
+
+  const parseModulePorts = (svText: string, moduleName: string): SvPort[] => {
+    const txt = stripSvComments((svText || "").replace(/\r\n/g, "\n"));
+    const modRe = new RegExp(`\\bmodule\\s+${moduleName}\\b`, "m");
+    const m = txt.match(modRe);
+    if (!m || m.index == null) return [];
+    const after = txt.slice(m.index);
+    const open = after.indexOf("(");
+    if (open < 0) return [];
+    // find matching ')'
+    let i = open + 1;
+    let depth = 1;
+    for (; i < after.length; i++) {
+      const ch = after[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    if (depth !== 0) return [];
+    const portBlock = after.slice(open + 1, i);
+
+    const rawItems = splitTopLevelCommas(portBlock);
+    const ports: SvPort[] = [];
+    let lastDir: "input" | "output" | "inout" | null = null;
+    let lastType = "logic";
+    let lastRange = "";
+
+    for (const item0 of rawItems) {
+      const item = item0.replace(/\s+/g, " ").trim();
+      if (!item) continue;
+
+      const dirMatch = item.match(/\b(input|output|inout)\b/);
+      if (dirMatch) lastDir = dirMatch[1] as any;
+
+      const rangeMatch = item.match(/\[[^\]]+\]/);
+      if (rangeMatch) lastRange = rangeMatch[0];
+
+      const typeMatch = item.match(/\b(logic|wire|reg|bit)\b/);
+      if (typeMatch) lastType = typeMatch[1];
+
+      // port name is usually last identifier in the item
+      const nameMatch = item.match(/([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\)|$)/);
+      const name = (nameMatch?.[1] || "").trim();
+      const dir = lastDir || (item.includes("output") ? "output" : item.includes("inout") ? "inout" : "input");
+      if (!name || name === moduleName) continue;
+
+      // Build a declaration for TB signal.
+      const decl = `${lastType} ${lastRange}`.replace(/\s+/g, " ").trim();
+      ports.push({ dir, name, decl });
+    }
+
+    // de-dupe by name
+    const seen = new Set<string>();
+    return ports.filter((p) => {
+      if (seen.has(p.name)) return false;
+      seen.add(p.name);
+      return true;
+    });
+  };
+
+  const genTbFromPorts = (dut: string, ports: SvPort[]): string => {
+    const tbName = `tb_${dut}`;
+    const lowerNames = ports.map((p) => p.name.toLowerCase());
+    const hasClk = lowerNames.includes("clk") || lowerNames.includes("clock");
+    const rstName = ports.find((p) => /(rst|reset)/i.test(p.name))?.name;
+
+    const decls = ports
+      .map((p) => {
+        // declare TB signals as logic
+        const base = p.decl || "logic";
+        // for outputs, still logic is fine
+        return `  ${base} ${p.name};`.replace(/\s+/g, " ");
+      })
+      .join("\n");
+
+    const assigns: string[] = [];
+    if (hasClk) assigns.push("  initial clk = 0;\n  always #5 clk = ~clk;\n");
+    if (rstName) assigns.push(`  initial begin\n    ${rstName} = 1'b1;\n    repeat (2) @(posedge ${hasClk ? "clk" : rstName});\n    ${rstName} = 1'b0;\n  end\n`);
+
+    const inst = ports.map((p) => `    .${p.name}(${p.name})`).join(",\n");
+
+    const initStim = ports
+      .filter((p) => p.dir === "input" && !/(clk|clock|rst|reset)/i.test(p.name))
+      .slice(0, 8)
+      .map((p) => `    ${p.name} = '0;`)
+      .join("\n");
+
+    const tick = hasClk ? "@(posedge clk)" : "#10";
+
+    const stim =
+      `  initial begin\n` +
+      `    $display(\"svAi: starting ${tbName}\");\n` +
+      (initStim ? initStim + "\n" : "") +
+      `    repeat (10) begin\n` +
+      `      ${tick};\n` +
+      `      // TODO: drive inputs / add checks\n` +
+      `    end\n` +
+      `    $finish;\n` +
+      `  end\n`;
+
+    const body =
+      `\`timescale 1ns/1ps\n\n` +
+      `module ${tbName}();\n` +
+      (decls ? decls + "\n\n" : "") +
+      `  ${dut} dut (\n${inst}\n  );\n\n` +
+      (assigns.length ? assigns.join("\n") + "\n" : "") +
+      stim +
+      `endmodule\n`;
+
+    return ensureTrailingNewline(body);
+  };
+
   const looksLikeDiff = (text: string): boolean => {
     const t = (text || "").trim();
     return /^(diff --git |--- |\+\+\+ |@@ )/m.test(t);
@@ -1841,7 +1985,22 @@ export default function App() {
                     if (!dut) return;
                     const tbName = `tb_${dut}`;
                     const rel = `tb/${tbName}.sv`;
-                    const template = ensureTrailingNewline(
+
+                    // Try to parse DUT ports from an open tab or from rtl/<dut>.sv.
+                    let dutText = "";
+                    const fromTab = openTabs.find((t) => t.relPath.endsWith(`/${dut}.sv`) || t.title === `${dut}.sv`)?.value;
+                    if (fromTab) {
+                      dutText = fromTab;
+                    } else {
+                      try {
+                        dutText = (await invoke("project_read_file", { root, relPath: `rtl/${dut}.sv` })) as string;
+                      } catch {
+                        // ignore
+                      }
+                    }
+
+                    const ports = dutText ? parseModulePorts(dutText, dut) : [];
+                    const template = ports.length ? genTbFromPorts(dut, ports) : ensureTrailingNewline(
                       `\`timescale 1ns/1ps\n\nmodule ${tbName}();\n  // TODO: declare signals + instantiate DUT (${dut})\n\n  logic clk = 0;\n  always #5 clk = ~clk;\n\n  initial begin\n    $display(\"svAi: TODO write stimulus\");\n    #100;\n    $finish;\n  end\nendmodule\n`
                     );
 
