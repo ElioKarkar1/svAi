@@ -2113,6 +2113,46 @@ export default function App() {
                         return o;
                       });
 
+                      const tbOp = ops.find((o: any) => o && (o.op === "write_file" || o.op === "create_file") && (o.file || "") === rel) as any;
+                      const tbContent = (tbOp?.content || "").toString().replace(/\r\n/g, "\n").trim();
+                      const skeletonNorm = (skeleton || "").replace(/\r\n/g, "\n").trim();
+
+                      const hasChecks = /\bassert\b|\$fatal\b|\$error\b/i.test(tbContent);
+                      const hasDrive = /\n\s*[a-zA-Z_][a-zA-Z0-9_]*\s*<=|\n\s*[a-zA-Z_][a-zA-Z0-9_]*\s*=/.test(tbContent);
+                      const stillTodo = /TODO/i.test(tbContent);
+                      const unchanged = tbContent && skeletonNorm && tbContent === skeletonNorm;
+
+                      if (unchanged || stillTodo || !hasChecks || !hasDrive) {
+                        // One retry with stricter instructions.
+                        const retryPrompt =
+                          prompt +
+                          `\n\nSTRICT REQUIREMENTS (must satisfy):\n` +
+                          `- DO NOT return the provided skeleton unchanged.\n` +
+                          `- MUST drive at least 2 DUT inputs with multiple values over time (directed + random).\n` +
+                          `- MUST include at least 3 checks using assert or $fatal (scoreboard/ref model if possible).\n` +
+                          `- Remove all TODOs.\n`;
+
+                        setAiApplyStatus(`Generating testbench (retry)… (${rel})`);
+                        const res2 = (await invoke("ai_chat", {
+                          root,
+                          provider: aiProvider,
+                          messages: [...aiMessages, { role: "user", content: retryPrompt }],
+                          includeProject: aiIncludeProject,
+                        })) as AiChatResult;
+
+                        const reply2 = (res2.output || "").trim();
+                        if (aiJobIdRef.current !== jobId) return;
+                        setAiApplyDetails(reply2);
+                        const parsed2 = tryParseJsonAny(reply2);
+                        let ops2 = extractAiOps(parsed2) || [];
+                        if (!ops2.length) throw new Error("AI did not return JSON ops (retry).");
+                        ops2 = ops2.map((o: any) => {
+                          if (o && (o.op === "write_file" || o.op === "create_file")) return { ...o, file: rel };
+                          return o;
+                        });
+                        ops = ops2;
+                      }
+
                       await applyOpsDirect(ops, { title: "Testbench", defaultOverwrite: true, allowCreateSuffixPrompt: false });
                       await maybeUpdateFilelist(rel);
                       await invoke("project_set_top", { root, top: tbName });
