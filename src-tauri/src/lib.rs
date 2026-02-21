@@ -118,6 +118,15 @@ fn term_start(window: tauri::Window, root: String, cols: u16, rows: u16) -> Resu
     let id_reader = id.clone();
     let win_reader = win.clone();
 
+    // Emit a marker immediately so the frontend can confirm shell streaming works.
+    let _ = win.emit(
+        "term:data",
+        TermDataEvent {
+            id: id.clone(),
+            data: "[shell started]\n".to_string(),
+        },
+    );
+
     // Reader thread: stream output to frontend
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];

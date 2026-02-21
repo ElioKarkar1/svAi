@@ -1351,11 +1351,18 @@ export default function App() {
     // Start backend PTY
     const cols = termRef.current?.cols || 80;
     const rows = termRef.current?.rows || 24;
-    const sid = (await invoke("term_start", { root, cols, rows })) as string;
-    termSessionIdRef.current = sid;
-    setTermSessionId(sid);
+    let sid = "";
+    try {
+      sid = (await invoke("term_start", { root, cols, rows })) as string;
+      termSessionIdRef.current = sid;
+      setTermSessionId(sid);
 
-    termRef.current?.writeln(`\x1b[90m[shell started: ${sid}]\x1b[0m`);
+      termRef.current?.writeln(`\x1b[90m[shell started: ${sid}]\x1b[0m`);
+    } catch (e: any) {
+      termRef.current?.writeln(`\x1b[31m[shell start failed]\x1b[0m ${String(e ?? "")}`);
+      throw e;
+    }
+
     try { termRef.current?.focus(); } catch {}
     try {
       const ta = termDivRef.current?.querySelector("textarea") as HTMLTextAreaElement | null;
