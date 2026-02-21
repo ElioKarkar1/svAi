@@ -257,6 +257,7 @@ export default function App() {
 
   const runStreamIdRef = useRef<string>("");
   const runStreamLogIdRef = useRef<string>("");
+  const listenersInitRef = useRef<boolean>(false);
 
   const buildMenuRef = useRef<HTMLDetailsElement | null>(null);
   const filesMenuRef = useRef<HTMLDetailsElement | null>(null);
@@ -1826,19 +1827,29 @@ export default function App() {
 
   // Shell terminal + run streaming event wiring + resize.
   useEffect(() => {
+    // React StrictMode can double-invoke effects in dev; guard to avoid duplicate listeners.
+    if (listenersInitRef.current) return;
+    listenersInitRef.current = true;
+
     let unlistenTerm: null | (() => void) = null;
     let unlistenRun: null | (() => void) = null;
     let unlistenExit: null | (() => void) = null;
+    let cancelled = false;
 
     void (async () => {
-      unlistenTerm = await listen<{ id: string; data: string }>("term:data", (e) => {
+      const u1 = await listen<{ id: string; data: string }>("term:data", (e) => {
         const sid = termSessionIdRef.current;
         if (!sid) return;
         if (e.payload?.id !== sid) return;
         termRef.current?.write(e.payload.data);
       });
+      if (cancelled) {
+        try { u1(); } catch {}
+      } else {
+        unlistenTerm = u1;
+      }
 
-      unlistenRun = await listen<{ id: string; data: string }>("run:data", (e) => {
+      const u2 = await listen<{ id: string; data: string }>("run:data", (e) => {
         const sid = runStreamIdRef.current;
         const logId = runStreamLogIdRef.current;
         if (!sid || !logId) return;
@@ -1856,8 +1867,13 @@ export default function App() {
           )
         );
       });
+      if (cancelled) {
+        try { u2(); } catch {}
+      } else {
+        unlistenRun = u2;
+      }
 
-      unlistenExit = await listen<{ id: string; code: number }>("run:exit", (e) => {
+      const u3 = await listen<{ id: string; code: number }>("run:exit", (e) => {
         const sid = runStreamIdRef.current;
         const logId = runStreamLogIdRef.current;
         if (!sid || !logId) return;
@@ -1878,6 +1894,11 @@ export default function App() {
           )
         );
       });
+      if (cancelled) {
+        try { u3(); } catch {}
+      } else {
+        unlistenExit = u3;
+      }
     })();
 
     const onResize = () => {
@@ -1893,6 +1914,7 @@ export default function App() {
 
     return () => {
       window.removeEventListener("resize", onResize);
+      cancelled = true;
       try {
         if (unlistenTerm) unlistenTerm();
         if (unlistenRun) unlistenRun();
