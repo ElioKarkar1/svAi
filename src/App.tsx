@@ -1344,6 +1344,7 @@ export default function App() {
     setTermSessionId(sid);
 
     termRef.current?.writeln(`\x1b[90m[shell started: ${sid}]\x1b[0m`);
+    try { termRef.current?.focus(); } catch {}
   };
 
   const stopShell = async () => {
@@ -3573,7 +3574,14 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                   </button>
                 </div>
               </div>
-              <div className="terminal__body shell__body" ref={termDivRef} />
+              <div
+                className="terminal__body shell__body"
+                ref={termDivRef}
+                tabIndex={0}
+                onMouseDown={() => {
+                  try { termRef.current?.focus(); } catch {}
+                }}
+              />
             </div>
           ) : null}
 
