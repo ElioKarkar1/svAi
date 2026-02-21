@@ -195,6 +195,7 @@ export default function App() {
   const runStreamBufRef = useRef<string>("");
   const runStreamBytesRef = useRef<number>(0);
   const [runStreamBytes, setRunStreamBytes] = useState<number>(0);
+  const [runStreamReady, setRunStreamReady] = useState<boolean>(false);
 
   const [problems, setProblems] = useState<Problem[]>([]);
   const [lastBuiltExe, setLastBuiltExe] = useState<string>("");
@@ -1931,6 +1932,9 @@ export default function App() {
       } else {
         unlistenExit = u3;
       }
+
+      // Mark run streaming listeners as ready.
+      setRunStreamReady(true);
     })();
 
     const onResize = () => {
@@ -2230,6 +2234,11 @@ export default function App() {
                   setPhase("running");
 
                   // Stream sim output to avoid IPC payload limits and show full output.
+                  if (!runStreamReady) {
+                    pushRun({ title: "Run", output: "Run streaming not ready yet (initializing listeners). Try again in a second." });
+                    return;
+                  }
+
                   const logId = pushRun({ title: "Run (running)", cmd: exe, code: undefined, output: "" });
                   runStreamLogIdRef.current = logId;
                   runStreamBufRef.current = "";
