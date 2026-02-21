@@ -48,6 +48,14 @@ struct RunExitEvent {
     code: i32,
 }
 
+#[tauri::command]
+fn debug_emit_run_data(window: tauri::Window, id: String, data: String) -> Result<(), String> {
+    window
+        .emit("run:data", RunDataEvent { id, data })
+        .map_err(|e| format!("emit failed: {e}"))?;
+    Ok(())
+}
+
 struct TermSession {
     #[allow(dead_code)]
     root: String,
@@ -2605,7 +2613,8 @@ pub fn run() {
             term_resize,
             term_kill,
             project_run_stream,
-            project_run_kill
+            project_run_kill,
+            debug_emit_run_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

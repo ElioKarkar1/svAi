@@ -3589,6 +3589,25 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                   <div className="muted" style={{ fontSize: 12, alignSelf: "center", marginRight: 8 }}>
                     {runStreamIdRef.current ? `stream: ${(runStreamBytes / 1024).toFixed(1)} KB` : ""}
                   </div>
+
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      // Debug: verify run:data events make it to the UI.
+                      const logId = pushRun({ title: "Run stream self-test", output: "" });
+                      runStreamLogIdRef.current = logId;
+                      runStreamIdRef.current = "test";
+                      runStreamBufRef.current = "";
+                      runStreamBytesRef.current = 0;
+                      setRunStreamBytes(0);
+                      void invoke("debug_emit_run_data", { id: "test", data: "HELLO FROM BACKEND\n" });
+                    }}
+                    disabled={busy || !root}
+                    title="Debug: emits a run:data event"
+                  >
+                    Test stream
+                  </button>
+
                   <button className="btn" onClick={() => { setRuns([]); setActiveRunId(null); }} disabled={busy}>
                     Clear
                   </button>
