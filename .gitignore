@@ -6,6 +6,9 @@
 .cache/
 _toolchain_tmp/
 
+# deps
+node_modules/
+
 # downloaded/built toolchains
 /src-tauri/resources/toolchain/
 *.zip
