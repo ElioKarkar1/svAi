@@ -192,6 +192,10 @@ export default function App() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const LAST_RUN_ID = "__last__";
 
+  const runStreamBufRef = useRef<string>("");
+  const runStreamBytesRef = useRef<number>(0);
+  const [runStreamBytes, setRunStreamBytes] = useState<number>(0);
+
   const [problems, setProblems] = useState<Problem[]>([]);
   const [lastBuiltExe, setLastBuiltExe] = useState<string>("");
   const [_lastWaves, setLastWaves] = useState<string>("");
@@ -1825,6 +1829,29 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, root]);
 
+  // Flush streamed run output into React state at a steady cadence (prevents UI "freezing").
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      const logId = runStreamLogIdRef.current;
+      if (!logId) return;
+      const buf = runStreamBufRef.current;
+      if (!buf) return;
+      runStreamBufRef.current = "";
+      setRunStreamBytes(runStreamBytesRef.current);
+      setRuns((prev) =>
+        prev.map((r) =>
+          r.id === logId
+            ? {
+                ...r,
+                output: (r.output || "") + buf,
+              }
+            : r
+        )
+      );
+    }, 60);
+    return () => window.clearInterval(t);
+  }, []);
+
   // Shell terminal + run streaming event wiring + resize.
   useEffect(() => {
     // React StrictMode can double-invoke effects in dev; guard to avoid duplicate listeners.
@@ -1856,16 +1883,8 @@ export default function App() {
         if (e.payload?.id !== sid) return;
 
         const chunk = e.payload.data || "";
-        setRuns((prev) =>
-          prev.map((r) =>
-            r.id === logId
-              ? {
-                  ...r,
-                  output: (r.output || "") + chunk,
-                }
-              : r
-          )
-        );
+        runStreamBufRef.current += chunk;
+        runStreamBytesRef.current += chunk.length;
       });
       if (cancelled) {
         try { u2(); } catch {}
@@ -1882,6 +1901,11 @@ export default function App() {
         runStreamIdRef.current = "";
 
         const code = Number((e.payload as any)?.code ?? 1);
+        // force-flush any remaining buffered output
+        const buf = runStreamBufRef.current;
+        runStreamBufRef.current = "";
+        setRunStreamBytes(runStreamBytesRef.current);
+
         setRuns((prev) =>
           prev.map((r) =>
             r.id === logId
@@ -1889,6 +1913,7 @@ export default function App() {
                   ...r,
                   title: `Run (${code === 0 ? "ok" : "exit " + code})`,
                   code,
+                  output: (r.output || "") + (buf || "") + `\n[process exited: ${code}]\n`,
                 }
               : r
           )
@@ -2200,9 +2225,15 @@ export default function App() {
                   // Stream sim output to avoid IPC payload limits and show full output.
                   const logId = pushRun({ title: "Run (running)", cmd: exe, code: undefined, output: "" });
                   runStreamLogIdRef.current = logId;
+                  runStreamBufRef.current = "";
+                  runStreamBytesRef.current = 0;
+                  setRunStreamBytes(0);
 
                   const sid = (await invoke("project_run_stream", { root, exeRel: exe })) as string;
                   runStreamIdRef.current = sid;
+
+                  // Seed the log with a marker so it's obvious streaming is active.
+                  setRuns((prev) => prev.map((r) => (r.id === logId ? { ...r, output: `[run started: ${sid}]\n` } : r)));
 
                   // Wait for exit event to flip title/code; UI remains responsive.
                 } catch (e: any) {
@@ -3482,6 +3513,9 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
               <div className="terminal__head">
                 {/* Single-slot mode: no run chips/history */}
                 <div className="terminal__actions">
+                  <div className="muted" style={{ fontSize: 12, alignSelf: "center", marginRight: 8 }}>
+                    {runStreamIdRef.current ? `stream: ${(runStreamBytes / 1024).toFixed(1)} KB` : ""}
+                  </div>
                   <button className="btn" onClick={() => { setRuns([]); setActiveRunId(null); }} disabled={busy}>
                     Clear
                   </button>
