@@ -7,7 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import iconPng from "../src-tauri/icons/32x32.png";
+import iconSvg from "./assets/svai-logo.svg";
 import "./App.css";
 
 type FsNode = { path: string; name: string; is_dir: boolean };
@@ -2209,7 +2209,7 @@ export default function App() {
     <div className={"app" + (aiOpen ? " app--ai" : "")}>
       <div className="titlebar">
         <div className="titlebar__left" data-tauri-drag-region>
-          <img className="titlebar__logo" src={iconPng} alt="svAi" data-tauri-drag-region />
+          <img className="titlebar__logo" src={iconSvg} alt="svAi" data-tauri-drag-region />
           <div className="titlebar__crumbs" data-tauri-drag-region>{crumbs || ""}</div>
         </div>
         <div className="titlebar__right">

@@ -75,8 +75,6 @@ button, input, textarea {
   width: 18px;
   height: 18px;
   opacity: 0.95;
-  border-radius: 4px;
-  background: var(--panel);
 }
 
 .winControls {
