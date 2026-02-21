@@ -24,6 +24,8 @@ type ToolchainStatus = {
   ok: boolean;
   version: string;
   error: string;
+  bundled?: boolean;
+  bundled_root?: string;
   make_path?: string;
   make_ok?: boolean;
   make_version?: string;

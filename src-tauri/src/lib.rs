@@ -277,6 +277,11 @@ struct ToolchainStatus {
     error: String,
 
     #[serde(default)]
+    bundled: bool,
+    #[serde(default)]
+    bundled_root: String,
+
+    #[serde(default)]
     make_path: String,
     #[serde(default)]
     make_ok: bool,
@@ -361,8 +366,71 @@ fn write_json<T: Serialize>(path: &Path, v: &T) -> Result<(), String> {
     fs::write(path, s).map_err(|e| format!("Failed to write file: {e}"))
 }
 
-fn verilator_candidates() -> Vec<String> {
+fn bundled_toolchain_subdir() -> String {
+    // Keep this in sync with how we bundle resources:
+    // resources/toolchain/<platform-arch>/...
+    let arch = std::env::consts::ARCH;
+    if cfg!(windows) {
+        // We currently only ship win-x64.
+        let _ = arch;
+        return "win-x64".to_string();
+    }
+    if cfg!(target_os = "macos") {
+        return match arch {
+            "aarch64" => "macos-arm64".to_string(),
+            "x86_64" => "macos-x64".to_string(),
+            _ => "macos-unknown".to_string(),
+        };
+    }
+    if cfg!(target_os = "linux") {
+        return match arch {
+            "x86_64" => "linux-x64".to_string(),
+            "aarch64" => "linux-arm64".to_string(),
+            _ => "linux-unknown".to_string(),
+        };
+    }
+    "unknown".to_string()
+}
+
+fn bundled_toolchain_root(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let base = app.path().resource_dir().ok()?;
+    let root = base.join("toolchain").join(bundled_toolchain_subdir());
+    if root.exists() {
+        Some(root)
+    } else {
+        None
+    }
+}
+
+fn maybe_prepend_exe(cands: &mut Vec<String>, p: PathBuf) {
+    if p.exists() {
+        cands.insert(0, p.to_string_lossy().to_string());
+    }
+}
+
+fn verilator_candidates(bundled: Option<&Path>) -> Vec<String> {
     let mut c = vec!["verilator".to_string()];
+
+    if let Some(root) = bundled {
+        // Common layouts we may bundle.
+        maybe_prepend_exe(
+            &mut c,
+            root.join("verilator").join("bin").join(if cfg!(windows) {
+                "verilator.exe"
+            } else {
+                "verilator"
+            }),
+        );
+        maybe_prepend_exe(
+            &mut c,
+            root.join("verilator").join("bin").join(if cfg!(windows) {
+                "verilator_bin.exe"
+            } else {
+                "verilator_bin"
+            }),
+        );
+    }
+
     if cfg!(windows) {
         c.push("C:\\msys64\\ucrt64\\bin\\verilator_bin.exe".to_string());
         c.push("C:\\msys64\\mingw64\\bin\\verilator_bin.exe".to_string());
@@ -429,8 +497,26 @@ fn run_msys2_bash(root: &Path, script: &str) -> Result<(i32, String), String> {
     run_cmd_capture(cmd)
 }
 
-fn make_candidates() -> Vec<String> {
+fn make_candidates(bundled: Option<&Path>) -> Vec<String> {
     let mut c = vec!["make".to_string()];
+
+    if let Some(root) = bundled {
+        maybe_prepend_exe(
+            &mut c,
+            root.join("make")
+                .join("bin")
+                .join(if cfg!(windows) { "make.exe" } else { "make" }),
+        );
+        maybe_prepend_exe(
+            &mut c,
+            root.join("make").join("bin").join(if cfg!(windows) {
+                "mingw32-make.exe"
+            } else {
+                "make"
+            }),
+        );
+    }
+
     if cfg!(windows) {
         c.insert(0, "C:\\msys64\\usr\\bin\\make.exe".to_string());
         c.insert(0, "C:\\msys64\\ucrt64\\bin\\make.exe".to_string());
@@ -439,8 +525,8 @@ fn make_candidates() -> Vec<String> {
     c
 }
 
-fn detect_make() -> (String, bool, String, String) {
-    for cand in make_candidates() {
+fn detect_make(bundled: Option<&Path>) -> (String, bool, String, String) {
+    for cand in make_candidates(bundled) {
         let path = cand.clone();
         let mut cmd = Command::new(&path);
         cmd.arg("--version");
@@ -463,8 +549,20 @@ fn detect_make() -> (String, bool, String, String) {
     )
 }
 
-fn gtkwave_candidates() -> Vec<String> {
+fn gtkwave_candidates(bundled: Option<&Path>) -> Vec<String> {
     let mut c = vec!["gtkwave".to_string()];
+
+    if let Some(root) = bundled {
+        maybe_prepend_exe(
+            &mut c,
+            root.join("gtkwave").join("bin").join(if cfg!(windows) {
+                "gtkwave.exe"
+            } else {
+                "gtkwave"
+            }),
+        );
+    }
+
     if cfg!(windows) {
         c.insert(0, "C:\\msys64\\ucrt64\\bin\\gtkwave.exe".to_string());
         c.insert(0, "C:\\msys64\\mingw64\\bin\\gtkwave.exe".to_string());
@@ -472,8 +570,8 @@ fn gtkwave_candidates() -> Vec<String> {
     c
 }
 
-fn detect_gtkwave() -> (String, bool, String, String) {
-    for cand in gtkwave_candidates() {
+fn detect_gtkwave(bundled: Option<&Path>) -> (String, bool, String, String) {
+    for cand in gtkwave_candidates(bundled) {
         let path = cand.clone();
         let mut cmd = Command::new(&path);
         cmd.arg("--version");
@@ -580,25 +678,35 @@ fn detect_gpp() -> (String, bool, String, String) {
     )
 }
 
-fn detect_verilator() -> ToolchainStatus {
-    let (make_path, make_ok, make_version, make_error) = detect_make();
-    let (gtkwave_path, gtkwave_ok, gtkwave_version, gtkwave_error) = detect_gtkwave();
+fn detect_verilator(app: &tauri::AppHandle) -> ToolchainStatus {
+    let bundled_root = bundled_toolchain_root(app);
+    let bundled_root_s = bundled_root
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let (make_path, make_ok, make_version, make_error) = detect_make(bundled_root.as_deref());
+    let (gtkwave_path, gtkwave_ok, gtkwave_version, gtkwave_error) =
+        detect_gtkwave(bundled_root.as_deref());
     let (bash_path, bash_ok, bash_error) = detect_bash();
     let (python_path, python_ok, python_version, python_error) = detect_python3();
     let (gpp_path, gpp_ok, gpp_version, gpp_error) = detect_gpp();
 
-    for cand in verilator_candidates() {
+    for cand in verilator_candidates(bundled_root.as_deref()) {
         let path = cand.clone();
         let mut cmd = Command::new(&path);
         cmd.arg("-V");
         let r = run_cmd_capture(cmd);
         if let Ok((code, out)) = r {
             if code == 0 && !out.trim().is_empty() {
+                let bundled = !bundled_root_s.is_empty() && path.starts_with(&bundled_root_s);
                 return ToolchainStatus {
                     verilator_path: path,
                     ok: true,
                     version: out.lines().next().unwrap_or("").to_string(),
                     error: "".to_string(),
+                    bundled,
+                    bundled_root: bundled_root_s,
                     make_path,
                     make_ok,
                     make_version,
@@ -628,6 +736,8 @@ fn detect_verilator() -> ToolchainStatus {
         ok: false,
         version: "".to_string(),
         error: "Verilator not found. Install it (MSYS2 UCRT64) and/or set the path.".to_string(),
+        bundled: false,
+        bundled_root: bundled_root_s,
         make_path,
         make_ok,
         make_version,
@@ -651,8 +761,8 @@ fn detect_verilator() -> ToolchainStatus {
 }
 
 #[tauri::command]
-fn toolchain_status() -> Result<ToolchainStatus, String> {
-    Ok(detect_verilator())
+fn toolchain_status(app: tauri::AppHandle) -> Result<ToolchainStatus, String> {
+    Ok(detect_verilator(&app))
 }
 
 #[tauri::command]
@@ -1949,7 +2059,11 @@ fn generate_sim_main_cpp(
 }
 
 #[tauri::command]
-fn project_lint(root: String, verilator_path: Option<String>) -> Result<LintResult, String> {
+fn project_lint(
+    app: tauri::AppHandle,
+    root: String,
+    verilator_path: Option<String>,
+) -> Result<LintResult, String> {
     let rootp = PathBuf::from(&root);
     let _canon = rootp
         .canonicalize()
@@ -1958,7 +2072,7 @@ fn project_lint(root: String, verilator_path: Option<String>) -> Result<LintResu
 
     let vpath = verilator_path
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| detect_verilator().verilator_path);
+        .unwrap_or_else(|| detect_verilator(&app).verilator_path);
 
     if vpath.trim().is_empty() {
         return Err("Verilator not found. Configure toolchain path.".to_string());
@@ -2050,8 +2164,9 @@ struct BuildResult {
     waves_path: String,
 }
 
-fn guess_make_path() -> String {
-    let (p, ok, _, _) = detect_make();
+fn guess_make_path(app: &tauri::AppHandle) -> String {
+    let bundled_root = bundled_toolchain_root(app);
+    let (p, ok, _, _) = detect_make(bundled_root.as_deref());
     if ok {
         p
     } else {
@@ -2061,6 +2176,7 @@ fn guess_make_path() -> String {
 
 #[tauri::command]
 async fn project_build(
+    app: tauri::AppHandle,
     root: String,
     verilator_path: Option<String>,
     make_path: Option<String>,
@@ -2075,14 +2191,14 @@ async fn project_build(
 
         let vpath = verilator_path
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| detect_verilator().verilator_path);
+            .unwrap_or_else(|| detect_verilator(&app).verilator_path);
         if vpath.trim().is_empty() {
             return Err("Verilator not found".to_string());
         }
 
         let mpath = make_path
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| guess_make_path());
+            .unwrap_or_else(|| guess_make_path(&app));
         if mpath.trim().is_empty() {
             return Err("make not found".to_string());
         }
@@ -2286,6 +2402,7 @@ struct RunResult {
 
 #[tauri::command]
 fn project_open_waves(
+    app: tauri::AppHandle,
     root: String,
     waves_rel: String,
     gtkwave_path: Option<String>,
@@ -2296,9 +2413,10 @@ fn project_open_waves(
         return Err("Waves file not found. Run the simulation first.".to_string());
     }
 
+    let bundled_root = bundled_toolchain_root(&app);
     let gpath = gtkwave_path
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| detect_gtkwave().0);
+        .unwrap_or_else(|| detect_gtkwave(bundled_root.as_deref()).0);
     if gpath.trim().is_empty() {
         return Err("GTKWave not found. Install it via MSYS2 and/or set path.".to_string());
     }
