@@ -2452,13 +2452,14 @@ fn project_run_stream(
     }
 
     // Emit a marker immediately.
-    let _ = win.emit(
+    win.emit(
         "run:data",
         RunDataEvent {
             id: id.clone(),
             data: "[run started]\n".to_string(),
         },
-    );
+    )
+    .map_err(|e| format!("Run stream failed: could not emit run:data marker: {e}"))?;
 
     // Reader threads
     if let Some(mut out) = stdout {
@@ -2471,15 +2472,20 @@ fn project_run_stream(
                     Ok(0) => break,
                     Ok(n) => {
                         let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = win2.emit(
+                        if let Err(e) = win2.emit(
                             "run:data",
                             RunDataEvent {
                                 id: id2.clone(),
                                 data: s,
                             },
-                        );
+                        ) {
+                            eprintln!("run:data emit failed (stdout): {e}");
+                        }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        eprintln!("run stdout read failed: {e}");
+                        break;
+                    }
                 }
             }
         });
@@ -2495,15 +2501,20 @@ fn project_run_stream(
                     Ok(0) => break,
                     Ok(n) => {
                         let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = win2.emit(
+                        if let Err(e) = win2.emit(
                             "run:data",
                             RunDataEvent {
                                 id: id2.clone(),
                                 data: s,
                             },
-                        );
+                        ) {
+                            eprintln!("run:data emit failed (stderr): {e}");
+                        }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        eprintln!("run stderr read failed: {e}");
+                        break;
+                    }
                 }
             }
         });
