@@ -2190,6 +2190,20 @@ export default function App() {
   }, [root, rootName, activeTab?.relPath]);
 
   const appWindow = useMemo(() => getCurrentWindow(), []);
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const m = await appWindow.isMaximized();
+        if (alive) setIsMaximized(!!m);
+      } catch {}
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [appWindow]);
 
   return (
     <div className={"app" + (aiOpen ? " app--ai" : "")}>
@@ -2206,13 +2220,25 @@ export default function App() {
 
           <div className="winControls">
             <button className="winBtn" onClick={() => void appWindow.minimize()} title="Minimize">
-              ─
+              {"\uE921"}
             </button>
-            <button className="winBtn" onClick={() => void appWindow.toggleMaximize()} title="Maximize / Restore">
-              □
+            <button
+              className="winBtn"
+              onClick={() =>
+                void (async () => {
+                  try {
+                    await appWindow.toggleMaximize();
+                    const m = await appWindow.isMaximized();
+                    setIsMaximized(!!m);
+                  } catch {}
+                })()
+              }
+              title={isMaximized ? "Restore" : "Maximize"}
+            >
+              {isMaximized ? "\uE923" : "\uE922"}
             </button>
             <button className="winBtn winBtn--close" onClick={() => void appWindow.close()} title="Close">
-              ×
+              {"\uE8BB"}
             </button>
           </div>
 
