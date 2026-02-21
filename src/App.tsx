@@ -1327,6 +1327,18 @@ export default function App() {
         try {
           fit.fit();
         } catch {}
+
+        // Force focus into xterm's hidden textarea (WebView2 can be finicky).
+        const focusXterm = () => {
+          try { t.focus(); } catch {}
+          try {
+            const ta = termDivRef.current?.querySelector("textarea") as HTMLTextAreaElement | null;
+            ta?.focus();
+          } catch {}
+        };
+        focusXterm();
+        setTimeout(focusXterm, 0);
+        setTimeout(focusXterm, 50);
       }
 
       t.onData((data) => {
@@ -1345,6 +1357,17 @@ export default function App() {
 
     termRef.current?.writeln(`\x1b[90m[shell started: ${sid}]\x1b[0m`);
     try { termRef.current?.focus(); } catch {}
+    try {
+      const ta = termDivRef.current?.querySelector("textarea") as HTMLTextAreaElement | null;
+      ta?.focus();
+    } catch {}
+    setTimeout(() => {
+      try { termRef.current?.focus(); } catch {}
+      try {
+        const ta = termDivRef.current?.querySelector("textarea") as HTMLTextAreaElement | null;
+        ta?.focus();
+      } catch {}
+    }, 0);
   };
 
   const stopShell = async () => {
@@ -3580,6 +3603,10 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                 tabIndex={0}
                 onMouseDown={() => {
                   try { termRef.current?.focus(); } catch {}
+                  try {
+                    const ta = termDivRef.current?.querySelector("textarea") as HTMLTextAreaElement | null;
+                    ta?.focus();
+                  } catch {}
                 }}
               />
             </div>
