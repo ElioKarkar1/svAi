@@ -2472,19 +2472,19 @@ fn project_run_stream(
         );
     }
 
+    // Emit a marker immediately so the frontend can bind the run id.
+    let _ = app.emit(
+        "run:data",
+        RunDataEvent {
+            id: id.clone(),
+            data: "[pty run started]\n".to_string(),
+        },
+    );
+
     // Reader thread: PTY output
     let app2 = app.clone();
     let id2 = id.clone();
     std::thread::spawn(move || {
-        // Small delay so the frontend has time to register the run id before the first event.
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let _ = app2.emit(
-            "run:data",
-            RunDataEvent {
-                id: id2.clone(),
-                data: "[pty run started]\n".to_string(),
-            },
-        );
         let mut buf = [0u8; 4096];
         loop {
             match reader.read(&mut buf) {
