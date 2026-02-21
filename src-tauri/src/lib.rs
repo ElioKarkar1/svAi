@@ -2429,6 +2429,16 @@ fn project_run_stream(
     cmd.args(args);
     cmd.cwd(root.clone());
 
+    // Windows/MSYS2-built sims often rely on MSYS2 DLLs being on PATH.
+    #[cfg(windows)]
+    {
+        let cur_path = std::env::var("PATH").unwrap_or_default();
+        let prefix = "C:\\msys64\\usr\\bin;C:\\msys64\\ucrt64\\bin;";
+        cmd.env("PATH", format!("{}{}", prefix, cur_path));
+        cmd.env("CHERE_INVOKING", "1");
+        cmd.env("MSYSTEM", "UCRT64");
+    }
+
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -2461,6 +2471,15 @@ fn project_run_stream(
             },
         );
     }
+
+    // Emit an immediate marker so UI can confirm the stream is live.
+    let _ = app.emit(
+        "run:data",
+        RunDataEvent {
+            id: id.clone(),
+            data: "[pty run started]\n".to_string(),
+        },
+    );
 
     // Reader thread: PTY output
     let app2 = app.clone();
