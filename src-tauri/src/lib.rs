@@ -2384,7 +2384,7 @@ fn project_run_stream(
     rows: Option<u16>,
 ) -> Result<String, String> {
     // Run under a PTY so stdout is line-buffered and streams smoothly.
-    let app = window.app_handle().clone();
+    let win = window.clone();
 
     let rootp = PathBuf::from(&root);
     let mut exe = rootp.join(&exe_rel);
@@ -2473,7 +2473,7 @@ fn project_run_stream(
     }
 
     // Emit a marker immediately so the frontend can bind the run id.
-    let _ = app.emit(
+    let _ = win.emit(
         "run:data",
         RunDataEvent {
             id: id.clone(),
@@ -2482,7 +2482,7 @@ fn project_run_stream(
     );
 
     // Reader thread: PTY output
-    let app2 = app.clone();
+    let win2 = win.clone();
     let id2 = id.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
@@ -2491,7 +2491,7 @@ fn project_run_stream(
                 Ok(0) => break,
                 Ok(n) => {
                     let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app2.emit(
+                    let _ = win2.emit(
                         "run:data",
                         RunDataEvent {
                             id: id2.clone(),
@@ -2505,7 +2505,7 @@ fn project_run_stream(
     });
 
     // Wait thread: emit exit + cleanup
-    let appw = app;
+    let winw = win.clone();
     let idw = id.clone();
     let childw = child_arc.clone();
     std::thread::spawn(move || {
@@ -2517,7 +2517,7 @@ fn project_run_stream(
             .map(|ok| if ok { 0 } else { 1 })
             .unwrap_or(1);
 
-        let _ = appw.emit(
+        let _ = winw.emit(
             "run:exit",
             RunExitEvent {
                 id: idw.clone(),
@@ -2526,7 +2526,7 @@ fn project_run_stream(
         );
 
         // Best-effort cleanup
-        if let Some(state) = appw.try_state::<RunManager>() {
+        if let Some(state) = winw.try_state::<RunManager>() {
             if let Ok(mut map) = state.sessions.lock() {
                 map.remove(&idw);
             }
