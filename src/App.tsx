@@ -262,7 +262,6 @@ export default function App() {
 
   const runStreamIdRef = useRef<string>("");
   const runStreamLogIdRef = useRef<string>("");
-  const listenersInitRef = useRef<boolean>(false);
 
   const buildMenuRef = useRef<HTMLDetailsElement | null>(null);
   const filesMenuRef = useRef<HTMLDetailsElement | null>(null);
@@ -1893,16 +1892,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bottomTab, root]);
 
-  // Shell terminal + run streaming event wiring + resize.
+  // Shell terminal wiring.
   useEffect(() => {
-    // React StrictMode can double-invoke effects in dev; guard to avoid duplicate listeners.
-    if (listenersInitRef.current) return;
-    listenersInitRef.current = true;
-
-    let unlistenTerm: null | (() => void) = null;
-    let unlistenRun: null | (() => void) = null;
-    let unlistenExit: null | (() => void) = null;
     let cancelled = false;
+    let unlistenTerm: null | (() => void) = null;
 
     void (async () => {
       const u1 = await listen<{ id: string; data: string }>("term:data", (e) => {
@@ -1922,8 +1915,37 @@ export default function App() {
       } else {
         unlistenTerm = u1;
       }
+    })();
 
+    const onResize = () => {
+      if (!termRef.current || !termFitRef.current) return;
+      try {
+        termFitRef.current.fit();
+      } catch {}
+      const sid = termSessionIdRef.current;
+      if (!sid) return;
+      void invoke("term_resize", { id: sid, cols: termRef.current.cols, rows: termRef.current.rows });
+    };
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+      cancelled = true;
+      try {
+        if (unlistenTerm) unlistenTerm();
+      } catch {}
+    };
+  }, []);
+
+  // Run streaming wiring (separate from shell; no one-time guard).
+  useEffect(() => {
+    let cancelled = false;
+    let unlistenRun: null | (() => void) = null;
+    let unlistenExit: null | (() => void) = null;
+
+    void (async () => {
       const u2 = await listen<{ id: string; data: string }>("run:data", (e) => {
+        if (cancelled) return;
         const logId = runStreamLogIdRef.current;
         if (!logId) return;
 
@@ -1939,7 +1961,6 @@ export default function App() {
         const chunk = e.payload.data || "";
         runStreamBufRef.current += chunk;
         runStreamBytesRef.current += chunk.length;
-        // update KB indicator promptly
         setRunStreamBytes(runStreamBytesRef.current);
       });
       if (cancelled) {
@@ -1949,6 +1970,7 @@ export default function App() {
       }
 
       const u3 = await listen<{ id: string; code: number }>("run:exit", (e) => {
+        if (cancelled) return;
         const sid = runStreamIdRef.current;
         const logId = runStreamLogIdRef.current;
         if (!sid || !logId) return;
@@ -1957,7 +1979,6 @@ export default function App() {
         runStreamIdRef.current = "";
 
         const code = Number((e.payload as any)?.code ?? 1);
-        // force-flush any remaining buffered output
         const buf = runStreamBufRef.current;
         runStreamBufRef.current = "";
         setRunStreamBytes(runStreamBytesRef.current);
@@ -1981,26 +2002,12 @@ export default function App() {
         unlistenExit = u3;
       }
 
-      // Mark run streaming listeners as ready.
       setRunStreamReady(true);
     })();
 
-    const onResize = () => {
-      if (!termRef.current || !termFitRef.current) return;
-      try {
-        termFitRef.current.fit();
-      } catch {}
-      const sid = termSessionIdRef.current;
-      if (!sid) return;
-      void invoke("term_resize", { id: sid, cols: termRef.current.cols, rows: termRef.current.rows });
-    };
-    window.addEventListener("resize", onResize);
-
     return () => {
-      window.removeEventListener("resize", onResize);
       cancelled = true;
       try {
-        if (unlistenTerm) unlistenTerm();
         if (unlistenRun) unlistenRun();
         if (unlistenExit) unlistenExit();
       } catch {}
