@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import Editor from "@monaco-editor/react";
+import { listen } from "@tauri-apps/api/event";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
 import "./App.css";
 
 type FsNode = { path: string; name: string; is_dir: boolean };
@@ -118,7 +122,7 @@ const lsCursorKey = (root: string) => `svai.cursor.${root}`;
 
 type LintResult = { code: number; output: string };
 
-type BottomTab = "problems" | "terminal";
+type BottomTab = "problems" | "terminal" | "shell";
 
 type ActivityTab = "explorer" | "problems" | "terminal" | "ai" | "settings";
 
@@ -244,6 +248,13 @@ export default function App() {
 
   const editorRef = useRef<any>(null);
   // const _aiInlineRef = useRef<{ file: string; line: number; after: string } | null>(null);
+
+  const termDivRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const termFitRef = useRef<FitAddon | null>(null);
+  const termSessionIdRef = useRef<string>("");
+  const [termSessionId, setTermSessionId] = useState<string>("");
+
   const buildMenuRef = useRef<HTMLDetailsElement | null>(null);
   const filesMenuRef = useRef<HTMLDetailsElement | null>(null);
   const projectMenuRef = useRef<HTMLDetailsElement | null>(null);
@@ -1285,6 +1296,58 @@ export default function App() {
     }
   };
 
+  const startShell = async () => {
+    if (!root) return;
+    if (termSessionIdRef.current) return;
+
+    // Create terminal instance if needed
+    if (!termRef.current) {
+      const t = new Terminal({
+        cursorBlink: true,
+        fontSize: 12,
+        convertEol: true,
+        scrollback: 5000,
+      });
+      const fit = new FitAddon();
+      t.loadAddon(fit);
+      termRef.current = t;
+      termFitRef.current = fit;
+
+      if (termDivRef.current) {
+        t.open(termDivRef.current);
+        try {
+          fit.fit();
+        } catch {}
+      }
+
+      t.onData((data) => {
+        const sid = termSessionIdRef.current;
+        if (!sid) return;
+        void invoke("term_write", { id: sid, data });
+      });
+    }
+
+    // Start backend PTY
+    const cols = termRef.current?.cols || 80;
+    const rows = termRef.current?.rows || 24;
+    const sid = (await invoke("term_start", { root, cols, rows })) as string;
+    termSessionIdRef.current = sid;
+    setTermSessionId(sid);
+
+    termRef.current?.writeln(`\x1b[90m[shell started: ${sid}]\x1b[0m`);
+  };
+
+  const stopShell = async () => {
+    const sid = termSessionIdRef.current;
+    if (!sid) return;
+    termSessionIdRef.current = "";
+    setTermSessionId("");
+    try {
+      await invoke("term_kill", { id: sid });
+    } catch {}
+    termRef.current?.writeln(`\r\n\x1b[90m[shell stopped]\x1b[0m`);
+  };
+
   const refreshToolchain = async () => {
     try {
       const s = (await invoke("toolchain_status")) as ToolchainStatus;
@@ -1757,6 +1820,37 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, root]);
+
+  // Shell terminal event wiring + resize.
+  useEffect(() => {
+    let unlisten: null | (() => void) = null;
+    void (async () => {
+      unlisten = await listen<{ id: string; data: string }>("term:data", (e) => {
+        const sid = termSessionIdRef.current;
+        if (!sid) return;
+        if (e.payload?.id !== sid) return;
+        termRef.current?.write(e.payload.data);
+      });
+    })();
+
+    const onResize = () => {
+      if (!termRef.current || !termFitRef.current) return;
+      try {
+        termFitRef.current.fit();
+      } catch {}
+      const sid = termSessionIdRef.current;
+      if (!sid) return;
+      void invoke("term_resize", { id: sid, cols: termRef.current.cols, rows: termRef.current.rows });
+    };
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+      try {
+        if (unlisten) unlisten();
+      } catch {}
+    };
+  }, []);
 
   const isInterestingFile = (p: string) => {
     const lower = (p || "").toLowerCase();
@@ -3272,6 +3366,9 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
           <button className={"bottomTab " + (bottomTab === "terminal" ? "is-active" : "")} onClick={() => setBottomTab("terminal")}>
             Terminal
           </button>
+          <button className={"bottomTab " + (bottomTab === "shell" ? "is-active" : "")} onClick={() => { setBottomTab("shell"); void startShell(); }}>
+            Shell
+          </button>
         </div>
         <div className="panel">
           {bottomTab === "problems" ? (
@@ -3320,6 +3417,35 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                 </div>
               </div>
               <pre className="terminal__body">{terminalText || "(no output)"}</pre>
+            </div>
+          ) : null}
+
+          {bottomTab === "shell" ? (
+            <div className="terminal">
+              <div className="terminal__head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {termSessionId ? `session: ${termSessionId}` : "(not started)"}
+                </div>
+                <div className="terminal__actions">
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      if (!termRef.current) return;
+                      termRef.current.clear();
+                    }}
+                    disabled={!termRef.current}
+                  >
+                    Clear
+                  </button>
+                  <button className="btn" onClick={() => void startShell()} disabled={!root || !!termSessionIdRef.current}>
+                    Start
+                  </button>
+                  <button className="btn" onClick={() => void stopShell()} disabled={!termSessionIdRef.current}>
+                    Stop
+                  </button>
+                </div>
+              </div>
+              <div className="terminal__body shell__body" ref={termDivRef} />
             </div>
           ) : null}
 

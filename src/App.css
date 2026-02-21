@@ -763,6 +763,16 @@ button, input, textarea {
   overflow: auto;
 }
 
+.shell__body {
+  /* xterm mounts into a div, so we need a real height */
+  height: 220px;
+  padding: 0;
+}
+
+.shell__body .xterm {
+  padding: 8px;
+}
+
 .statusbar {
   display: flex;
   align-items: center;

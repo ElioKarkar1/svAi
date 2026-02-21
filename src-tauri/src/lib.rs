@@ -1,6 +1,14 @@
+use std::collections::HashMap;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+
+use tauri::{Emitter, Manager};
+
+use portable_pty::{CommandBuilder, PtySize};
+use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +21,176 @@ use std::os::windows::process::CommandExt;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[derive(Default)]
+struct TermManager {
+    sessions: Mutex<HashMap<String, TermSession>>,
+}
+
+struct TermSession {
+    #[allow(dead_code)]
+    root: String,
+    writer: Box<dyn Write + Send>,
+    child: Box<dyn portable_pty::Child + Send>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TermDataEvent {
+    id: String,
+    data: String,
+}
+
+fn default_shell() -> Vec<String> {
+    // Return argv: [exe, args...]
+    if cfg!(windows) {
+        // Prefer MSYS2 bash if present (matches the toolchain environment)
+        let bash = "C:\\msys64\\usr\\bin\\bash.exe";
+        if PathBuf::from(bash).exists() {
+            return vec![bash.to_string(), "-l".to_string()];
+        }
+        return vec!["powershell.exe".to_string(), "-NoLogo".to_string()];
+    }
+    vec!["bash".to_string(), "-l".to_string()]
+}
+
+#[tauri::command]
+fn term_start(window: tauri::Window, root: String, cols: u16, rows: u16) -> Result<String, String> {
+    let app = window.app_handle();
+    let label = window.label().to_string();
+
+    let argv = default_shell();
+    let exe = argv.get(0).cloned().unwrap_or_else(|| "bash".to_string());
+    let args = argv.iter().skip(1).cloned().collect::<Vec<_>>();
+
+    let pty_system = portable_pty::native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("pty open failed: {e}"))?;
+
+    let mut cmd = CommandBuilder::new(exe);
+    cmd.args(args);
+    if !root.trim().is_empty() {
+        cmd.cwd(root.clone());
+    }
+
+    // Spawn child
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("pty spawn failed: {e}"))?;
+
+    // Split master into reader+writer
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("pty reader failed: {e}"))?;
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("pty writer failed: {e}"))?;
+
+    let id = Uuid::new_v4().to_string();
+    let id_reader = id.clone();
+    let label_reader = label.clone();
+    let app_reader = app.clone();
+
+    // Reader thread: stream output to frontend
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let _ = app_reader.emit_to(
+                        &label_reader,
+                        "term:data",
+                        TermDataEvent {
+                            id: id_reader.clone(),
+                            data: s,
+                        },
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Note: we currently don't emit an explicit exit event; the frontend can infer
+    // session end when it stops receiving output or after a user-initiated kill.
+
+    // Store session
+    let state: tauri::State<TermManager> = window.state();
+    {
+        let mut map = state
+            .sessions
+            .lock()
+            .map_err(|_| "term sessions poisoned".to_string())?;
+        map.insert(
+            id.clone(),
+            TermSession {
+                root,
+                writer: Box::new(writer),
+                child,
+            },
+        );
+    }
+
+    Ok(id)
+}
+
+#[tauri::command]
+fn term_write(window: tauri::Window, id: String, data: String) -> Result<(), String> {
+    let state: tauri::State<TermManager> = window.state();
+    let mut map = state
+        .sessions
+        .lock()
+        .map_err(|_| "term sessions poisoned".to_string())?;
+    let s = map
+        .get_mut(&id)
+        .ok_or_else(|| "term session not found".to_string())?;
+    s.writer
+        .write_all(data.as_bytes())
+        .map_err(|e| format!("term write failed: {e}"))?;
+    s.writer.flush().ok();
+    Ok(())
+}
+
+#[tauri::command]
+fn term_resize(window: tauri::Window, id: String, cols: u16, rows: u16) -> Result<(), String> {
+    let state: tauri::State<TermManager> = window.state();
+    let map = state
+        .sessions
+        .lock()
+        .map_err(|_| "term sessions poisoned".to_string())?;
+    let s = map
+        .get(&id)
+        .ok_or_else(|| "term session not found".to_string())?;
+
+    // portable-pty resize requires access to master; we don't store it currently.
+    // For now, best-effort: no-op.
+    let _ = (s, cols, rows);
+    Ok(())
+}
+
+#[tauri::command]
+fn term_kill(window: tauri::Window, id: String) -> Result<(), String> {
+    let state: tauri::State<TermManager> = window.state();
+    let mut map = state
+        .sessions
+        .lock()
+        .map_err(|_| "term sessions poisoned".to_string())?;
+    if let Some(mut s) = map.remove(&id) {
+        let _ = s.child.kill();
+        let _ = s.child.wait();
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SvlabConfig {
@@ -2176,6 +2354,7 @@ async fn project_run(root: String, exe_rel: String) -> Result<RunResult, String>
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(TermManager::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -2201,7 +2380,11 @@ pub fn run() {
             project_apply_patch,
             project_build,
             project_run,
-            project_open_waves
+            project_open_waves,
+            term_start,
+            term_write,
+            term_resize,
+            term_kill
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
