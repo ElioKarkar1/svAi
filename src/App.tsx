@@ -1305,11 +1305,7 @@ export default function App() {
     }
   };
 
-  const startShell = async () => {
-    if (!root) return;
-    if (termSessionIdRef.current) return;
-
-    // Create terminal instance if needed
+  const ensureShellTerminalMounted = () => {
     if (!termRef.current) {
       const t = new Terminal({
         cursorBlink: true,
@@ -1322,25 +1318,6 @@ export default function App() {
       termRef.current = t;
       termFitRef.current = fit;
 
-      if (termDivRef.current) {
-        t.open(termDivRef.current);
-        try {
-          fit.fit();
-        } catch {}
-
-        // Force focus into xterm's hidden textarea (WebView2 can be finicky).
-        const focusXterm = () => {
-          try { t.focus(); } catch {}
-          try {
-            const ta = termDivRef.current?.querySelector("textarea") as HTMLTextAreaElement | null;
-            ta?.focus();
-          } catch {}
-        };
-        focusXterm();
-        setTimeout(focusXterm, 0);
-        setTimeout(focusXterm, 50);
-      }
-
       t.onData((data) => {
         const sid = termSessionIdRef.current;
         if (!sid) return;
@@ -1348,33 +1325,48 @@ export default function App() {
       });
     }
 
+    // If the terminal exists but hasn't been opened into the DOM yet, open it now.
+    const t = termRef.current;
+    const fit = termFitRef.current;
+    if (t && fit && termDivRef.current && !(t as any)._openedIntoDom) {
+      t.open(termDivRef.current);
+      (t as any)._openedIntoDom = true;
+      try { fit.fit(); } catch {}
+    }
+
+    // Force focus into xterm's hidden textarea (WebView2 can be finicky).
+    const focusXterm = () => {
+      try { termRef.current?.focus(); } catch {}
+      try {
+        const ta = termDivRef.current?.querySelector("textarea") as HTMLTextAreaElement | null;
+        ta?.focus();
+      } catch {}
+    };
+    focusXterm();
+    setTimeout(focusXterm, 0);
+    setTimeout(focusXterm, 50);
+  };
+
+  const startShell = async () => {
+    if (!root) return;
+    if (termSessionIdRef.current) return;
+
+    ensureShellTerminalMounted();
+
     // Start backend PTY
     const cols = termRef.current?.cols || 80;
     const rows = termRef.current?.rows || 24;
-    let sid = "";
     try {
-      sid = (await invoke("term_start", { root, cols, rows })) as string;
+      const sid = (await invoke("term_start", { root, cols, rows })) as string;
       termSessionIdRef.current = sid;
       setTermSessionId(sid);
-
       termRef.current?.writeln(`\x1b[90m[shell started: ${sid}]\x1b[0m`);
     } catch (e: any) {
       termRef.current?.writeln(`\x1b[31m[shell start failed]\x1b[0m ${String(e ?? "")}`);
       throw e;
     }
 
-    try { termRef.current?.focus(); } catch {}
-    try {
-      const ta = termDivRef.current?.querySelector("textarea") as HTMLTextAreaElement | null;
-      ta?.focus();
-    } catch {}
-    setTimeout(() => {
-      try { termRef.current?.focus(); } catch {}
-      try {
-        const ta = termDivRef.current?.querySelector("textarea") as HTMLTextAreaElement | null;
-        ta?.focus();
-      } catch {}
-    }, 0);
+    ensureShellTerminalMounted();
   };
 
   const stopShell = async () => {
@@ -1883,6 +1875,18 @@ export default function App() {
     }, 60);
     return () => window.clearInterval(t);
   }, []);
+
+  // Auto-start shell when the Shell tab is shown (after the DOM mount exists).
+  useEffect(() => {
+    if (bottomTab !== "shell") return;
+    if (!root) return;
+    // wait a tick for the shell div to mount
+    setTimeout(() => {
+      ensureShellTerminalMounted();
+      void startShell();
+    }, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bottomTab, root]);
 
   // Shell terminal + run streaming event wiring + resize.
   useEffect(() => {
@@ -3528,7 +3532,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
           <button className={"bottomTab " + (bottomTab === "terminal" ? "is-active" : "")} onClick={() => setBottomTab("terminal")}>
             Terminal
           </button>
-          <button className={"bottomTab " + (bottomTab === "shell" ? "is-active" : "")} onClick={() => { setBottomTab("shell"); void startShell(); }}>
+          <button className={"bottomTab " + (bottomTab === "shell" ? "is-active" : "")} onClick={() => setBottomTab("shell")}>
             Shell
           </button>
         </div>
