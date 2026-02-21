@@ -2429,7 +2429,6 @@ fn project_run_stream(
     // Reader threads
     if let Some(mut out) = stdout {
         let app2 = app.clone();
-        let label2 = label.clone();
         let id2 = id.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
@@ -2438,8 +2437,7 @@ fn project_run_stream(
                     Ok(0) => break,
                     Ok(n) => {
                         let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = app2.emit_to(
-                            &label2,
+                        let _ = app2.emit(
                             "run:data",
                             RunDataEvent {
                                 id: id2.clone(),
@@ -2455,7 +2453,6 @@ fn project_run_stream(
 
     if let Some(mut err) = stderr {
         let app2 = app.clone();
-        let label2 = label.clone();
         let id2 = id.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
@@ -2464,8 +2461,7 @@ fn project_run_stream(
                     Ok(0) => break,
                     Ok(n) => {
                         let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = app2.emit_to(
-                            &label2,
+                        let _ = app2.emit(
                             "run:data",
                             RunDataEvent {
                                 id: id2.clone(),
@@ -2491,7 +2487,7 @@ fn project_run_stream(
 
     // Wait thread
     let appw = app;
-    let labelw = label;
+    let _labelw = label;
     let idw = id.clone();
     let childw = child_arc.clone();
     std::thread::spawn(move || {
@@ -2501,7 +2497,7 @@ fn project_run_stream(
             .and_then(|mut c| c.wait().ok())
             .and_then(|s| s.code())
             .unwrap_or(1);
-        let _ = appw.emit_to(&labelw, "run:exit", RunExitEvent { id: idw, code });
+        let _ = appw.emit("run:exit", RunExitEvent { id: idw, code });
     });
 
     Ok(id)
