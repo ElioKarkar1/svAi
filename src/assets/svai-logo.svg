@@ -14,8 +14,8 @@
   <rect x="1.3" y="1.3" width="15.4" height="15.4" rx="3.6" fill="none" stroke="url(#g)" stroke-width="1.4" />
 
   <!-- Letters (gradient like original) -->
-  <text x="9" y="12.6" text-anchor="middle"
+  <text x="9" y="12.55" text-anchor="middle"
         font-family="Arial Black, Segoe UI Black, Segoe UI, Arial, sans-serif"
-        font-size="9.5" font-weight="900" letter-spacing="-0.6"
+        font-size="8.9" font-weight="900" letter-spacing="-0.6"
         fill="url(#g)">SV</text>
 </svg>
