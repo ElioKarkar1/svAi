@@ -1877,9 +1877,16 @@ export default function App() {
       }
 
       const u2 = await listen<{ id: string; data: string }>("run:data", (e) => {
-        const sid = runStreamIdRef.current;
         const logId = runStreamLogIdRef.current;
-        if (!sid || !logId) return;
+        if (!logId) return;
+
+        // If an event arrives before we set the session id, bind it now.
+        if (!runStreamIdRef.current && e.payload?.id) {
+          runStreamIdRef.current = e.payload.id;
+        }
+
+        const sid = runStreamIdRef.current;
+        if (!sid) return;
         if (e.payload?.id !== sid) return;
 
         const chunk = e.payload.data || "";
