@@ -28,9 +28,7 @@ struct TermManager {
 }
 
 struct RunSession {
-    child: Arc<Mutex<Box<dyn portable_pty::Child + Send>>>,
-    // Keep PTY master writer alive for the lifetime of the run (avoids premature PTY teardown).
-    _writer: Box<dyn Write + Send>,
+    child: Arc<Mutex<std::process::Child>>,
 }
 
 #[derive(Default)]
@@ -801,6 +799,7 @@ fn load_or_init_config(root: &Path) -> Result<SvlabConfig, String> {
                 "--sv".to_string(),
                 "-Wall".to_string(),
                 "-Wno-fatal".to_string(),
+                "--autoflush".to_string(),
                 "--timing".to_string(),
             ];
         }
@@ -819,6 +818,11 @@ fn load_or_init_config(root: &Path) -> Result<SvlabConfig, String> {
             .any(|x| x == "-Wno-fatal" || x == "--Wno-fatal")
         {
             cfg.verilator_args.push("-Wno-fatal".to_string());
+        }
+
+        // Flush $display/$write immediately so streamed output doesn't appear to "stall".
+        if !cfg.verilator_args.iter().any(|x| x == "--autoflush") {
+            cfg.verilator_args.push("--autoflush".to_string());
         }
         if cfg.max_time == 0 {
             cfg.max_time = 200000;
@@ -2380,10 +2384,8 @@ fn project_run_stream(
     window: tauri::Window,
     root: String,
     exe_rel: String,
-    cols: Option<u16>,
-    rows: Option<u16>,
 ) -> Result<String, String> {
-    // Run under a PTY so stdout is line-buffered and streams smoothly.
+    // Stream via pipes (stdout+stderr) and rely on Verilator --autoflush to avoid stalls.
     let win = window.clone();
 
     let rootp = PathBuf::from(&root);
@@ -2402,62 +2404,40 @@ fn project_run_stream(
         }
     }
 
-    let exe_s = exe.to_string_lossy().to_string();
+    let mut cmd = Command::new(&exe);
+    cmd.current_dir(&rootp);
 
-    let mut args: Vec<String> = vec![];
     if let Ok(cfg) = load_or_init_config(&rootp) {
         for a in cfg.plusargs.iter() {
             let t = a.trim();
             if t.is_empty() {
                 continue;
             }
-            args.push(t.to_string());
+            cmd.arg(t);
         }
     }
 
-    let pty_system = portable_pty::native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: rows.unwrap_or(24),
-            cols: cols.unwrap_or(80),
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| format!("pty open failed: {e}"))?;
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
 
-    let mut cmd = CommandBuilder::new(exe_s);
-    cmd.args(args);
-    cmd.cwd(root.clone());
-
-    // Windows/MSYS2-built sims often rely on MSYS2 DLLs being on PATH.
     #[cfg(windows)]
     {
-        let cur_path = std::env::var("PATH").unwrap_or_default();
-        let prefix = "C:\\msys64\\usr\\bin;C:\\msys64\\ucrt64\\bin;";
-        cmd.env("PATH", format!("{}{}", prefix, cur_path));
-        cmd.env("CHERE_INVOKING", "1");
-        cmd.env("MSYSTEM", "UCRT64");
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let child = pair
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("pty spawn failed: {e}"))?;
-
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| format!("pty reader failed: {e}"))?;
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| format!("pty writer failed: {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to start process: {e}"))?;
 
     let id = Uuid::new_v4().to_string();
 
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let child_arc: Arc<Mutex<std::process::Child>> = Arc::new(Mutex::new(child));
+
     // Track for kill / lifecycle
     let state: tauri::State<RunManager> = window.state();
-    let child_arc: Arc<Mutex<Box<dyn portable_pty::Child + Send>>> = Arc::new(Mutex::new(child));
     {
         let mut map = state
             .sessions
@@ -2467,45 +2447,70 @@ fn project_run_stream(
             id.clone(),
             RunSession {
                 child: child_arc.clone(),
-                _writer: Box::new(writer),
             },
         );
     }
 
-    // Emit a marker immediately so the frontend can bind the run id.
+    // Emit a marker immediately.
     let _ = win.emit(
         "run:data",
         RunDataEvent {
             id: id.clone(),
-            data: "[pty run started]\n".to_string(),
+            data: "[run started]\n".to_string(),
         },
     );
 
-    // Reader thread: PTY output
-    let win2 = win.clone();
-    let id2 = id.clone();
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = win2.emit(
-                        "run:data",
-                        RunDataEvent {
-                            id: id2.clone(),
-                            data: s,
-                        },
-                    );
+    // Reader threads
+    if let Some(mut out) = stdout {
+        let win2 = win.clone();
+        let id2 = id.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match out.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                        let _ = win2.emit(
+                            "run:data",
+                            RunDataEvent {
+                                id: id2.clone(),
+                                data: s,
+                            },
+                        );
+                    }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
-        }
-    });
+        });
+    }
 
-    // Wait thread: emit exit + cleanup
-    let winw = win.clone();
+    if let Some(mut err) = stderr {
+        let win2 = win.clone();
+        let id2 = id.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match err.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                        let _ = win2.emit(
+                            "run:data",
+                            RunDataEvent {
+                                id: id2.clone(),
+                                data: s,
+                            },
+                        );
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    // Wait thread
+    let winw = win;
     let idw = id.clone();
     let childw = child_arc.clone();
     std::thread::spawn(move || {
@@ -2513,10 +2518,8 @@ fn project_run_stream(
             .lock()
             .ok()
             .and_then(|mut c| c.wait().ok())
-            .map(|s| s.success())
-            .map(|ok| if ok { 0 } else { 1 })
+            .and_then(|s| s.code())
             .unwrap_or(1);
-
         let _ = winw.emit(
             "run:exit",
             RunExitEvent {
@@ -2525,7 +2528,6 @@ fn project_run_stream(
             },
         );
 
-        // Best-effort cleanup
         if let Some(state) = winw.try_state::<RunManager>() {
             if let Ok(mut map) = state.sessions.lock() {
                 map.remove(&idw);
