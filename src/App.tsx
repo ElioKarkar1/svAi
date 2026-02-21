@@ -2193,32 +2193,32 @@ export default function App() {
 
   return (
     <div className={"app" + (aiOpen ? " app--ai" : "")}>
-      <div className="titlebar" data-tauri-drag-region>
+      <div className="titlebar">
         <div className="titlebar__left" data-tauri-drag-region>
           <img className="titlebar__logo" src={iconPng} alt="svAi" data-tauri-drag-region />
           <div className="titlebar__crumbs" data-tauri-drag-region>{crumbs || ""}</div>
         </div>
-        <div className="titlebar__right" data-tauri-drag-region={false}>
-          <div className="titlebar__tools" data-tauri-drag-region={false}>
+        <div className="titlebar__right">
+          <div className="titlebar__tools">
 
-          <button className="btn btn--primary" onClick={() => void (document.activeElement as any)?.blur?.()} style={{ display: "none" }} data-tauri-drag-region={false} />
+          <button className="btn btn--primary" onClick={() => void (document.activeElement as any)?.blur?.()} style={{ display: "none" }} />
           </div>
 
-          <div className="winControls" data-tauri-drag-region={false}>
-            <button className="winBtn" data-tauri-drag-region={false} onClick={() => void appWindow.minimize()} title="Minimize">
+          <div className="winControls">
+            <button className="winBtn" onClick={() => void appWindow.minimize()} title="Minimize">
               ─
             </button>
-            <button className="winBtn" data-tauri-drag-region={false} onClick={() => void appWindow.toggleMaximize()} title="Maximize / Restore">
+            <button className="winBtn" onClick={() => void appWindow.toggleMaximize()} title="Maximize / Restore">
               □
             </button>
-            <button className="winBtn winBtn--close" data-tauri-drag-region={false} onClick={() => void appWindow.close()} title="Close">
+            <button className="winBtn winBtn--close" onClick={() => void appWindow.close()} title="Close">
               ×
             </button>
           </div>
 
           <button
             className="btn"
-            data-tauri-drag-region={false}
+           
             onClick={() =>
               void (async () => {
                 if (!root || !_lastWaves) return;
@@ -2242,7 +2242,7 @@ export default function App() {
 
           <button
             className="btn"
-            data-tauri-drag-region={false}
+           
             onClick={() =>
               void (async () => {
                 if (!root) return;
@@ -2353,7 +2353,7 @@ export default function App() {
 
           <details
             className="menu"
-            data-tauri-drag-region={false}
+           
             ref={buildMenuRef}
             onToggle={() => {
               if (!buildMenuRef.current?.open) return;
@@ -2467,7 +2467,7 @@ export default function App() {
 
           <details
             className="menu"
-            data-tauri-drag-region={false}
+           
             ref={filesMenuRef}
             onToggle={() => {
               if (!filesMenuRef.current?.open) return;
@@ -2722,7 +2722,7 @@ export default function App() {
 
           <details
             className="menu"
-            data-tauri-drag-region={false}
+           
             ref={projectMenuRef}
             onToggle={() => {
               if (!projectMenuRef.current?.open) return;
@@ -2892,7 +2892,7 @@ export default function App() {
 
           <details
             className="menu"
-            data-tauri-drag-region={false}
+           
             ref={toolsMenuRef}
             onToggle={() => {
               if (!toolsMenuRef.current?.open) return;
@@ -2907,7 +2907,7 @@ export default function App() {
             <div className="menu__panel">
               <button
                 className="menu__item"
-                data-tauri-drag-region={false}
+               
                 onClick={() => {
                   closeMenus();
                   setSetupOpen(true);
