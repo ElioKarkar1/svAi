@@ -45,7 +45,7 @@ type ToolchainStatus = {
 
 type BuildResult = { code: number; output: string; exe_path: string; waves_path: string };
 
-type RunResult = { code: number; output: string };
+// type RunResult = { code: number; output: string }; // (streamed now)
 
 type TopDetectResult = { candidates: string[]; recommended: string; current: string };
 
@@ -254,6 +254,9 @@ export default function App() {
   const termFitRef = useRef<FitAddon | null>(null);
   const termSessionIdRef = useRef<string>("");
   const [termSessionId, setTermSessionId] = useState<string>("");
+
+  const runStreamIdRef = useRef<string>("");
+  const runStreamLogIdRef = useRef<string>("");
 
   const buildMenuRef = useRef<HTMLDetailsElement | null>(null);
   const filesMenuRef = useRef<HTMLDetailsElement | null>(null);
@@ -1821,15 +1824,59 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, root]);
 
-  // Shell terminal event wiring + resize.
+  // Shell terminal + run streaming event wiring + resize.
   useEffect(() => {
-    let unlisten: null | (() => void) = null;
+    let unlistenTerm: null | (() => void) = null;
+    let unlistenRun: null | (() => void) = null;
+    let unlistenExit: null | (() => void) = null;
+
     void (async () => {
-      unlisten = await listen<{ id: string; data: string }>("term:data", (e) => {
+      unlistenTerm = await listen<{ id: string; data: string }>("term:data", (e) => {
         const sid = termSessionIdRef.current;
         if (!sid) return;
         if (e.payload?.id !== sid) return;
         termRef.current?.write(e.payload.data);
+      });
+
+      unlistenRun = await listen<{ id: string; data: string }>("run:data", (e) => {
+        const sid = runStreamIdRef.current;
+        const logId = runStreamLogIdRef.current;
+        if (!sid || !logId) return;
+        if (e.payload?.id !== sid) return;
+
+        const chunk = e.payload.data || "";
+        setRuns((prev) =>
+          prev.map((r) =>
+            r.id === logId
+              ? {
+                  ...r,
+                  output: (r.output || "") + chunk,
+                }
+              : r
+          )
+        );
+      });
+
+      unlistenExit = await listen<{ id: string; code: number }>("run:exit", (e) => {
+        const sid = runStreamIdRef.current;
+        const logId = runStreamLogIdRef.current;
+        if (!sid || !logId) return;
+        if (e.payload?.id !== sid) return;
+
+        runStreamIdRef.current = "";
+
+        const code = Number((e.payload as any)?.code ?? 1);
+        setRuns((prev) =>
+          prev.map((r) =>
+            r.id === logId
+              ? {
+                  ...r,
+                  title: `Run (${code === 0 ? "ok" : "exit " + code})`,
+                  code,
+                }
+              : r
+          )
+        );
       });
     })();
 
@@ -1847,7 +1894,9 @@ export default function App() {
     return () => {
       window.removeEventListener("resize", onResize);
       try {
-        if (unlisten) unlisten();
+        if (unlistenTerm) unlistenTerm();
+        if (unlistenRun) unlistenRun();
+        if (unlistenExit) unlistenExit();
       } catch {}
     };
   }, []);
@@ -2125,8 +2174,15 @@ export default function App() {
                     return;
                   }
                   setPhase("running");
-                  const res = (await invoke("project_run", { root, exeRel: exe })) as RunResult;
-                  pushRun({ title: `Run (${res.code === 0 ? "ok" : "exit " + res.code})`, cmd: exe, code: res.code, output: res.output || "" });
+
+                  // Stream sim output to avoid IPC payload limits and show full output.
+                  const logId = pushRun({ title: "Run (running)", cmd: exe, code: undefined, output: "" });
+                  runStreamLogIdRef.current = logId;
+
+                  const sid = (await invoke("project_run_stream", { root, exeRel: exe })) as string;
+                  runStreamIdRef.current = sid;
+
+                  // Wait for exit event to flip title/code; UI remains responsive.
                 } catch (e: any) {
                   pushRun({ title: "Run (error)", output: String(e ?? "") });
                 } finally {

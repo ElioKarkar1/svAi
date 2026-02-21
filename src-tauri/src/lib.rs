@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
 
@@ -25,6 +25,23 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[derive(Default)]
 struct TermManager {
     sessions: Mutex<HashMap<String, TermSession>>,
+}
+
+#[derive(Default)]
+struct RunManager {
+    sessions: Mutex<HashMap<String, Arc<Mutex<std::process::Child>>>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RunDataEvent {
+    id: String,
+    data: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RunExitEvent {
+    id: String,
+    code: i32,
 }
 
 struct TermSession {
@@ -55,7 +72,7 @@ fn default_shell() -> Vec<String> {
 
 #[tauri::command]
 fn term_start(window: tauri::Window, root: String, cols: u16, rows: u16) -> Result<String, String> {
-    let app = window.app_handle();
+    let app = window.app_handle().clone();
     let label = window.label().to_string();
 
     let argv = default_shell();
@@ -2313,6 +2330,7 @@ fn project_open_waves(
 
 #[tauri::command]
 async fn project_run(root: String, exe_rel: String) -> Result<RunResult, String> {
+    // Legacy non-streaming run (kept for compatibility)
     tauri::async_runtime::spawn_blocking(move || {
         let rootp = PathBuf::from(&root);
         let mut exe = rootp.join(&exe_rel);
@@ -2351,10 +2369,164 @@ async fn project_run(root: String, exe_rel: String) -> Result<RunResult, String>
     .map_err(|e| format!("Run task failed: {e}"))?
 }
 
+#[tauri::command]
+fn project_run_stream(
+    window: tauri::Window,
+    root: String,
+    exe_rel: String,
+) -> Result<String, String> {
+    let app = window.app_handle().clone();
+    let label = window.label().to_string();
+
+    let rootp = PathBuf::from(&root);
+    let mut exe = rootp.join(&exe_rel);
+    if !exe.exists() {
+        if cfg!(windows) {
+            let alt_rel = format!("{}.exe", exe_rel.trim_end_matches(".exe"));
+            let alt = rootp.join(alt_rel);
+            if alt.exists() {
+                exe = alt;
+            } else {
+                return Err("Executable not found. Build first.".to_string());
+            }
+        } else {
+            return Err("Executable not found. Build first.".to_string());
+        }
+    }
+
+    let mut cmd = Command::new(&exe);
+    cmd.current_dir(&rootp);
+
+    if let Ok(cfg) = load_or_init_config(&rootp) {
+        for a in cfg.plusargs.iter() {
+            let t = a.trim();
+            if t.is_empty() {
+                continue;
+            }
+            cmd.arg(t);
+        }
+    }
+
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to start process: {e}"))?;
+
+    let id = Uuid::new_v4().to_string();
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let child_arc: Arc<Mutex<std::process::Child>> = Arc::new(Mutex::new(child));
+
+    // Reader threads
+    if let Some(mut out) = stdout {
+        let app2 = app.clone();
+        let label2 = label.clone();
+        let id2 = id.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match out.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                        let _ = app2.emit_to(
+                            &label2,
+                            "run:data",
+                            RunDataEvent {
+                                id: id2.clone(),
+                                data: s,
+                            },
+                        );
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    if let Some(mut err) = stderr {
+        let app2 = app.clone();
+        let label2 = label.clone();
+        let id2 = id.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match err.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                        let _ = app2.emit_to(
+                            &label2,
+                            "run:data",
+                            RunDataEvent {
+                                id: id2.clone(),
+                                data: s,
+                            },
+                        );
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    // Track for kill / lifecycle
+    let state: tauri::State<RunManager> = window.state();
+    {
+        let mut map = state
+            .sessions
+            .lock()
+            .map_err(|_| "run sessions poisoned".to_string())?;
+        map.insert(id.clone(), child_arc.clone());
+    }
+
+    // Wait thread
+    let appw = app;
+    let labelw = label;
+    let idw = id.clone();
+    let childw = child_arc.clone();
+    std::thread::spawn(move || {
+        let code = childw
+            .lock()
+            .ok()
+            .and_then(|mut c| c.wait().ok())
+            .and_then(|s| s.code())
+            .unwrap_or(1);
+        let _ = appw.emit_to(&labelw, "run:exit", RunExitEvent { id: idw, code });
+    });
+
+    Ok(id)
+}
+
+#[tauri::command]
+fn project_run_kill(window: tauri::Window, id: String) -> Result<(), String> {
+    let state: tauri::State<RunManager> = window.state();
+    let mut map = state
+        .sessions
+        .lock()
+        .map_err(|_| "run sessions poisoned".to_string())?;
+    if let Some(c) = map.remove(&id) {
+        if let Ok(mut g) = c.lock() {
+            let _ = g.kill();
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(TermManager::default())
+        .manage(RunManager::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -2384,7 +2556,9 @@ pub fn run() {
             term_start,
             term_write,
             term_resize,
-            term_kill
+            term_kill,
+            project_run_stream,
+            project_run_kill
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
