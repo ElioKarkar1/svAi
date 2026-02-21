@@ -1325,12 +1325,18 @@ export default function App() {
       });
     }
 
-    // If the terminal exists but hasn't been opened into the DOM yet, open it now.
+    // Open (or re-open) terminal into the current DOM node.
     const t = termRef.current;
     const fit = termFitRef.current;
-    if (t && fit && termDivRef.current && !(t as any)._openedIntoDom) {
-      t.open(termDivRef.current);
-      (t as any)._openedIntoDom = true;
+    const host = termDivRef.current;
+    if (t && fit && host) {
+      const curHost = (t as any)._openedHost as HTMLElement | null | undefined;
+      if (!curHost || curHost !== host) {
+        try {
+          t.open(host);
+          (t as any)._openedHost = host;
+        } catch {}
+      }
       try { fit.fit(); } catch {}
     }
 
