@@ -1897,6 +1897,12 @@ export default function App() {
 
     void (async () => {
       const u1 = await listen<{ id: string; data: string }>("term:data", (e) => {
+        // Bind session id if the first event arrives before we set it.
+        if (!termSessionIdRef.current && e.payload?.id) {
+          termSessionIdRef.current = e.payload.id;
+          setTermSessionId(e.payload.id);
+        }
+
         const sid = termSessionIdRef.current;
         if (!sid) return;
         if (e.payload?.id !== sid) return;
