@@ -76,8 +76,7 @@ fn default_shell() -> Vec<String> {
 
 #[tauri::command]
 fn term_start(window: tauri::Window, root: String, cols: u16, rows: u16) -> Result<String, String> {
-    let app = window.app_handle().clone();
-    let label = window.label().to_string();
+    let win = window.clone();
 
     let argv = default_shell();
     let exe = argv.get(0).cloned().unwrap_or_else(|| "bash".to_string());
@@ -117,8 +116,7 @@ fn term_start(window: tauri::Window, root: String, cols: u16, rows: u16) -> Resu
 
     let id = Uuid::new_v4().to_string();
     let id_reader = id.clone();
-    let label_reader = label.clone();
-    let app_reader = app.clone();
+    let win_reader = win.clone();
 
     // Reader thread: stream output to frontend
     std::thread::spawn(move || {
@@ -128,8 +126,7 @@ fn term_start(window: tauri::Window, root: String, cols: u16, rows: u16) -> Resu
                 Ok(0) => break,
                 Ok(n) => {
                     let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app_reader.emit_to(
-                        &label_reader,
+                    let _ = win_reader.emit(
                         "term:data",
                         TermDataEvent {
                             id: id_reader.clone(),
