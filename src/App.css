@@ -29,8 +29,7 @@ button, input, textarea {
 .app {
   height: 100vh;
   display: grid;
-  /* Titlebar may wrap when window is narrow */
-  grid-template-rows: auto 1fr 220px 22px;
+  grid-template-rows: 34px 1fr 220px 22px;
 }
 
 .titlebar {
@@ -38,10 +37,10 @@ button, input, textarea {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 6px 10px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
-  flex-wrap: wrap;
+  user-select: none;
 }
 
 .titlebar__left, .titlebar__right {
@@ -49,7 +48,33 @@ button, input, textarea {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  flex-wrap: wrap;
+}
+
+.winControls {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  margin-right: 6px;
+}
+
+.winBtn {
+  width: 40px;
+  height: 26px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.02);
+  color: rgba(255,255,255,0.85);
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.winBtn:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+.winBtn--close:hover {
+  background: rgba(239,68,68,0.25);
+  border-color: rgba(239,68,68,0.35);
 }
 
 .titlebar__app {
