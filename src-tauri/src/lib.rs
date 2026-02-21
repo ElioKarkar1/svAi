@@ -2379,13 +2379,19 @@ async fn project_run(root: String, exe_rel: String) -> Result<RunResult, String>
     .map_err(|e| format!("Run task failed: {e}"))?
 }
 
-#[tauri::command]
-fn project_run_stream(
-    window: tauri::Window,
+#[derive(Deserialize)]
+struct RunStreamArgs {
     root: String,
+    #[serde(alias = "exeRel")]
     exe_rel: String,
-) -> Result<String, String> {
+}
+
+#[tauri::command]
+fn project_run_stream(window: tauri::Window, args: RunStreamArgs) -> Result<String, String> {
+    let root = args.root;
+    let exe_rel = args.exe_rel;
     // Stream via pipes (stdout+stderr) and rely on Verilator --autoflush to avoid stalls.
+    println!("project_run_stream: root={} exe_rel={}", root, exe_rel);
     let win = window.clone();
 
     let rootp = PathBuf::from(&root);
