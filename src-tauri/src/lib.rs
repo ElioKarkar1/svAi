@@ -7,6 +7,62 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
 
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.exists() {
+        return Err(format!("missing source dir: {}", src.to_string_lossy()));
+    }
+    fs::create_dir_all(dst).map_err(|e| format!("Failed to create dir: {e}"))?;
+    for ent in fs::read_dir(src).map_err(|e| format!("Failed to read dir: {e}"))? {
+        let ent = ent.map_err(|e| format!("Failed to read dir entry: {e}"))?;
+        let p = ent.path();
+        let name = ent.file_name().to_str().unwrap_or("").to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let to = dst.join(&name);
+        if p.is_dir() {
+            copy_dir_recursive(&p, &to)?;
+        } else {
+            fs::copy(&p, &to).map_err(|e| format!("Failed to copy file: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn example_copy(
+    app: tauri::AppHandle,
+    example: String,
+    dest_dir: String,
+) -> Result<String, String> {
+    let ex = example.trim();
+    if ex.is_empty() {
+        return Err("Missing example".to_string());
+    }
+    let destp = PathBuf::from(dest_dir.trim());
+    if dest_dir.trim().is_empty() {
+        return Err("Missing destination".to_string());
+    }
+
+    let res = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("resource_dir error: {e}"))?;
+    let src = res.join("examples").join(ex);
+
+    // Create folder dest/<example>
+    let target = destp.join(ex);
+    if target.exists() {
+        return Err(format!(
+            "Target already exists: {}",
+            target.to_string_lossy()
+        ));
+    }
+
+    copy_dir_recursive(&src, &target)?;
+    Ok(target.to_string_lossy().to_string())
+}
+
 use portable_pty::{CommandBuilder, PtySize};
 use uuid::Uuid;
 
@@ -2774,7 +2830,8 @@ pub fn run() {
             term_resize,
             term_kill,
             project_run_stream,
-            project_run_kill
+            project_run_kill,
+            example_copy
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

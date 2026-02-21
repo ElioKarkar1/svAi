@@ -1,0 +1,14 @@
+{
+  "top": "tb_counter",
+  "filelist": "files.f",
+  "include_dirs": [],
+  "defines": [],
+  "verilator_args": [
+    "--sv",
+    "-Wall",
+    "--timing"
+  ],
+  "max_time": 200000,
+  "trace": true,
+  "plusargs": []
+}

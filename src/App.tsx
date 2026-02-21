@@ -2784,6 +2784,37 @@ export default function App() {
 
               <button
                 className="menu__item"
+                onClick={() =>
+                  void (async () => {
+                    closeMenus();
+                    if (busy) return;
+                    try {
+                      const dest = await open({
+                        directory: true,
+                        multiple: false,
+                        title: "Choose a folder to copy the example into",
+                      });
+                      const destDir = (dest || "").toString().trim();
+                      if (!destDir) return;
+                      setBusy(true);
+                      const created = (await invoke("example_copy", { example: "counter", destDir })) as string;
+                      pushRun({ title: "Example", output: `Copied example to: ${created}` });
+                      await loadProject(created, true);
+                    } catch (e: any) {
+                      pushRun({ title: "Example (error)", output: String(e?.message ?? e ?? "") });
+                      setBottomTab("terminal");
+                    } finally {
+                      setBusy(false);
+                    }
+                  })()
+                }
+                disabled={busy}
+              >
+                Copy Example: Counter…
+              </button>
+
+              <button
+                className="menu__item"
                 onClick={() => {
                   closeMenus();
                   void openProjectSetupWizard(root);
