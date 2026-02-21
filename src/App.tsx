@@ -1882,11 +1882,10 @@ export default function App() {
     return () => window.clearInterval(t);
   }, []);
 
-  // Auto-start shell when the Shell tab is shown (after the DOM mount exists).
+  // Auto-start shell when the Shell tab is shown.
   useEffect(() => {
     if (bottomTab !== "shell") return;
     if (!root) return;
-    // wait a tick for the shell div to mount
     setTimeout(() => {
       ensureShellTerminalMounted();
       void startShell();
@@ -3571,7 +3570,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
             </div>
           ) : null}
 
-          {bottomTab === "terminal" ? (
+          <div style={{ display: bottomTab === "terminal" ? "block" : "none" }}>
             <div className="terminal">
               <div className="terminal__head">
                 {/* Single-slot mode: no run chips/history */}
@@ -3593,9 +3592,9 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
               </div>
               <pre className="terminal__body">{terminalText || "(no output)"}</pre>
             </div>
-          ) : null}
+          </div>
 
-          {bottomTab === "shell" ? (
+          <div style={{ display: bottomTab === "shell" ? "block" : "none" }}>
             <div className="terminal">
               <div className="terminal__head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div className="muted" style={{ fontSize: 12 }}>
@@ -3633,7 +3632,7 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
                 }}
               />
             </div>
-          ) : null}
+          </div>
 
           {/* AI panel is only the right sidebar now */}
         </div>
