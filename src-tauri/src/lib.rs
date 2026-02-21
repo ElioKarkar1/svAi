@@ -2398,7 +2398,9 @@ fn project_run_stream(window: tauri::Window, args: RunStreamArgs) -> Result<Stri
     let exe_rel = args.exe_rel;
     // Stream via pipes (stdout+stderr) and rely on Verilator --autoflush to avoid stalls.
     println!("project_run_stream: root={} exe_rel={}", root, exe_rel);
-    let win = window.clone();
+
+    let app = window.app_handle().clone();
+    let label = window.label().to_string();
 
     let rootp = PathBuf::from(&root);
     let mut exe = rootp.join(&exe_rel);
@@ -2464,7 +2466,8 @@ fn project_run_stream(window: tauri::Window, args: RunStreamArgs) -> Result<Stri
     }
 
     // Emit a marker immediately.
-    win.emit(
+    app.emit_to(
+        &label,
         "run:data",
         RunDataEvent {
             id: id.clone(),
@@ -2475,7 +2478,8 @@ fn project_run_stream(window: tauri::Window, args: RunStreamArgs) -> Result<Stri
 
     // Reader threads
     if let Some(mut out) = stdout {
-        let win2 = win.clone();
+        let app2 = app.clone();
+        let label2 = label.clone();
         let id2 = id.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
@@ -2484,15 +2488,14 @@ fn project_run_stream(window: tauri::Window, args: RunStreamArgs) -> Result<Stri
                     Ok(0) => break,
                     Ok(n) => {
                         let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                        if let Err(e) = win2.emit(
+                        let _ = app2.emit_to(
+                            &label2,
                             "run:data",
                             RunDataEvent {
                                 id: id2.clone(),
                                 data: s,
                             },
-                        ) {
-                            eprintln!("run:data emit failed (stdout): {e}");
-                        }
+                        );
                     }
                     Err(e) => {
                         eprintln!("run stdout read failed: {e}");
@@ -2504,7 +2507,8 @@ fn project_run_stream(window: tauri::Window, args: RunStreamArgs) -> Result<Stri
     }
 
     if let Some(mut err) = stderr {
-        let win2 = win.clone();
+        let app2 = app.clone();
+        let label2 = label.clone();
         let id2 = id.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
@@ -2513,15 +2517,14 @@ fn project_run_stream(window: tauri::Window, args: RunStreamArgs) -> Result<Stri
                     Ok(0) => break,
                     Ok(n) => {
                         let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                        if let Err(e) = win2.emit(
+                        let _ = app2.emit_to(
+                            &label2,
                             "run:data",
                             RunDataEvent {
                                 id: id2.clone(),
                                 data: s,
                             },
-                        ) {
-                            eprintln!("run:data emit failed (stderr): {e}");
-                        }
+                        );
                     }
                     Err(e) => {
                         eprintln!("run stderr read failed: {e}");
@@ -2533,7 +2536,8 @@ fn project_run_stream(window: tauri::Window, args: RunStreamArgs) -> Result<Stri
     }
 
     // Wait thread
-    let winw = win;
+    let appw = app;
+    let labelw = label;
     let idw = id.clone();
     let childw = child_arc.clone();
     std::thread::spawn(move || {
@@ -2543,19 +2547,14 @@ fn project_run_stream(window: tauri::Window, args: RunStreamArgs) -> Result<Stri
             .and_then(|mut c| c.wait().ok())
             .and_then(|s| s.code())
             .unwrap_or(1);
-        let _ = winw.emit(
+        let _ = appw.emit_to(
+            &labelw,
             "run:exit",
             RunExitEvent {
                 id: idw.clone(),
                 code,
             },
         );
-
-        if let Some(state) = winw.try_state::<RunManager>() {
-            if let Ok(mut map) = state.sessions.lock() {
-                map.remove(&idw);
-            }
-        }
     });
 
     Ok(id)
