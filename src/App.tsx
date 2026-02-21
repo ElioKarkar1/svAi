@@ -2229,7 +2229,7 @@ export default function App() {
                   runStreamBytesRef.current = 0;
                   setRunStreamBytes(0);
 
-                  const sid = (await invoke("project_run_stream", { root, exeRel: exe })) as string;
+                  const sid = (await invoke("project_run_stream", { root, exeRel: exe, cols: 80, rows: 24 })) as string;
                   runStreamIdRef.current = sid;
 
                   // Seed the log with a marker so it's obvious streaming is active.

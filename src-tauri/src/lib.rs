@@ -27,9 +27,15 @@ struct TermManager {
     sessions: Mutex<HashMap<String, TermSession>>,
 }
 
+struct RunSession {
+    child: Arc<Mutex<Box<dyn portable_pty::Child + Send>>>,
+    // Keep PTY master writer alive for the lifetime of the run (avoids premature PTY teardown).
+    _writer: Box<dyn Write + Send>,
+}
+
 #[derive(Default)]
 struct RunManager {
-    sessions: Mutex<HashMap<String, Arc<Mutex<Box<dyn portable_pty::Child + Send>>>>>,
+    sessions: Mutex<HashMap<String, RunSession>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2374,6 +2380,8 @@ fn project_run_stream(
     window: tauri::Window,
     root: String,
     exe_rel: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
 ) -> Result<String, String> {
     // Run under a PTY so stdout is line-buffered and streams smoothly.
     let app = window.app_handle().clone();
@@ -2410,8 +2418,8 @@ fn project_run_stream(
     let pty_system = portable_pty::native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows: rows.unwrap_or(24),
+            cols: cols.unwrap_or(80),
             pixel_width: 0,
             pixel_height: 0,
         })
@@ -2430,6 +2438,10 @@ fn project_run_stream(
         .master
         .try_clone_reader()
         .map_err(|e| format!("pty reader failed: {e}"))?;
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("pty writer failed: {e}"))?;
 
     let id = Uuid::new_v4().to_string();
 
@@ -2441,7 +2453,13 @@ fn project_run_stream(
             .sessions
             .lock()
             .map_err(|_| "run sessions poisoned".to_string())?;
-        map.insert(id.clone(), child_arc.clone());
+        map.insert(
+            id.clone(),
+            RunSession {
+                child: child_arc.clone(),
+                _writer: Box::new(writer),
+            },
+        );
     }
 
     // Reader thread: PTY output
@@ -2506,8 +2524,8 @@ fn project_run_kill(window: tauri::Window, id: String) -> Result<(), String> {
         .sessions
         .lock()
         .map_err(|_| "run sessions poisoned".to_string())?;
-    if let Some(c) = map.remove(&id) {
-        if let Ok(mut g) = c.lock() {
+    if let Some(s) = map.remove(&id) {
+        if let Ok(mut g) = s.child.lock() {
             let _ = g.kill();
         }
     }
