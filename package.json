@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "fetch-toolchain:win-x64": "node ./scripts/fetch-toolchain-win-x64.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

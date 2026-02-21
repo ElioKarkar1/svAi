@@ -412,21 +412,21 @@ fn verilator_candidates(bundled: Option<&Path>) -> Vec<String> {
     let mut c = vec!["verilator".to_string()];
 
     if let Some(root) = bundled {
-        // Common layouts we may bundle.
+        // Our bundled layout: resources/toolchain/<platform-arch>/ucrt64/bin/...
         maybe_prepend_exe(
             &mut c,
-            root.join("verilator").join("bin").join(if cfg!(windows) {
-                "verilator.exe"
+            root.join("ucrt64").join("bin").join(if cfg!(windows) {
+                "verilator_bin.exe"
             } else {
                 "verilator"
             }),
         );
         maybe_prepend_exe(
             &mut c,
-            root.join("verilator").join("bin").join(if cfg!(windows) {
-                "verilator_bin.exe"
+            root.join("ucrt64").join("bin").join(if cfg!(windows) {
+                "verilator.exe"
             } else {
-                "verilator_bin"
+                "verilator"
             }),
         );
     }
@@ -469,14 +469,43 @@ fn is_msys2_path(p: &str) -> bool {
     l.contains("\\msys64\\") || l.contains("/msys64/")
 }
 
+fn is_bundled_tool(bundled_root: Option<&Path>, tool_path: &str) -> bool {
+    let br = match bundled_root {
+        Some(x) => x.to_string_lossy().to_string(),
+        None => return false,
+    };
+    let tp = tool_path.replace('/', "\\");
+    let brn = br.replace('/', "\\");
+    tp.starts_with(&brn)
+}
+
 fn msys2_bash_path() -> String {
     "C:\\msys64\\usr\\bin\\bash.exe".to_string()
 }
 
-fn run_msys2_bash(root: &Path, script: &str) -> Result<(i32, String), String> {
-    let bash = msys2_bash_path();
+fn bundled_msys2_bash_path(bundled_root: Option<&Path>) -> Option<PathBuf> {
+    let root = bundled_root?;
+    let p = root.join("msys").join("usr").join("bin").join("bash.exe");
+    if p.exists() {
+        Some(p)
+    } else {
+        None
+    }
+}
+
+fn run_msys2_bash(
+    root: &Path,
+    bundled_root: Option<&Path>,
+    script: &str,
+) -> Result<(i32, String), String> {
+    let bash = if let Some(p) = bundled_msys2_bash_path(bundled_root) {
+        p.to_string_lossy().to_string()
+    } else {
+        msys2_bash_path()
+    };
+
     if !PathBuf::from(&bash).exists() {
-        return Err("MSYS2 bash.exe not found at C:\\msys64\\usr\\bin\\bash.exe".to_string());
+        return Err(format!("MSYS2 bash.exe not found at {bash}"));
     }
 
     // -l for login env, -c for command
@@ -489,10 +518,24 @@ fn run_msys2_bash(root: &Path, script: &str) -> Result<(i32, String), String> {
     cmd.env("CHERE_INVOKING", "1");
     cmd.env("MSYSTEM", "UCRT64");
 
-    // Ensure core utils + toolchain resolve.
+    // Prefer bundled PATH if present.
     let cur_path = std::env::var("PATH").unwrap_or_default();
-    let prefix = "C:\\msys64\\usr\\bin;C:\\msys64\\ucrt64\\bin;";
+    let prefix = if let Some(br) = bundled_root {
+        let msys = br.join("msys").join("usr").join("bin");
+        let ucrt = br.join("ucrt64").join("bin");
+        format!("{};{};", msys.to_string_lossy(), ucrt.to_string_lossy())
+    } else {
+        "C:\\msys64\\usr\\bin;C:\\msys64\\ucrt64\\bin;".to_string()
+    };
     cmd.env("PATH", format!("{}{}", prefix, cur_path));
+
+    // If we have a bundled VERILATOR_ROOT, set it.
+    if let Some(br) = bundled_root {
+        let vroot = br.join("ucrt64").join("share").join("verilator");
+        if vroot.exists() {
+            cmd.env("VERILATOR_ROOT", vroot.to_string_lossy().to_string());
+        }
+    }
 
     run_cmd_capture(cmd)
 }
@@ -501,19 +544,12 @@ fn make_candidates(bundled: Option<&Path>) -> Vec<String> {
     let mut c = vec!["make".to_string()];
 
     if let Some(root) = bundled {
+        // Bundled layout: .../ucrt64/bin/make.exe
         maybe_prepend_exe(
             &mut c,
-            root.join("make")
+            root.join("ucrt64")
                 .join("bin")
                 .join(if cfg!(windows) { "make.exe" } else { "make" }),
-        );
-        maybe_prepend_exe(
-            &mut c,
-            root.join("make").join("bin").join(if cfg!(windows) {
-                "mingw32-make.exe"
-            } else {
-                "make"
-            }),
         );
     }
 
@@ -553,9 +589,10 @@ fn gtkwave_candidates(bundled: Option<&Path>) -> Vec<String> {
     let mut c = vec!["gtkwave".to_string()];
 
     if let Some(root) = bundled {
+        // Bundled layout: .../ucrt64/bin/gtkwave.exe
         maybe_prepend_exe(
             &mut c,
-            root.join("gtkwave").join("bin").join(if cfg!(windows) {
+            root.join("ucrt64").join("bin").join(if cfg!(windows) {
                 "gtkwave.exe"
             } else {
                 "gtkwave"
@@ -2082,7 +2119,9 @@ fn project_lint(
     let fl = cfg.filelist.trim();
     let flp = rootp.join(fl);
 
-    if cfg!(windows) && is_msys2_path(&vpath) {
+    let bundled_root = bundled_toolchain_root(&app);
+    if cfg!(windows) && (is_msys2_path(&vpath) || is_bundled_tool(bundled_root.as_deref(), &vpath))
+    {
         // Run inside MSYS2 bash so /ucrt64 paths + python scripts work.
         let mut parts: Vec<String> = vec![];
         parts.push(format!("\"{}\"", vpath.replace('"', "\\\"")));
@@ -2101,7 +2140,8 @@ fn project_lint(
             parts.push(fl.to_string());
         }
         let cmdline = format!("VERILATOR_ROOT=/ucrt64/share/verilator {}", parts.join(" "));
-        let (code, output) = run_msys2_bash(&rootp, &cmdline)?;
+        let bundled_root = bundled_toolchain_root(&app);
+        let (code, output) = run_msys2_bash(&rootp, bundled_root.as_deref(), &cmdline)?;
         return Ok(LintResult { code, output });
     }
 
@@ -2203,6 +2243,8 @@ async fn project_build(
             return Err("make not found".to_string());
         }
 
+        let bundled_root = bundled_toolchain_root(&app);
+
         let top = cfg.top.trim();
         if top.is_empty() {
             return Err("Set .svlab.json top first".to_string());
@@ -2226,7 +2268,9 @@ async fn project_build(
         vcmd.current_dir(&rootp);
         // MSYS2 builds: we'll invoke verilator via bash -lc so paths resolve.
         // Non-MSYS builds still get VERILATOR_ROOT set to help find built-ins.
-        if !cfg!(windows) || !is_msys2_path(&vpath) {
+        if !cfg!(windows)
+            || !(is_msys2_path(&vpath) || is_bundled_tool(bundled_root.as_deref(), &vpath))
+        {
             if let Some(vroot) = msys_verilator_root_from_bin(&vpath) {
                 vcmd.env("VERILATOR_ROOT", vroot);
             }
@@ -2285,7 +2329,9 @@ async fn project_build(
             }
         }
 
-        let (vcode, vout) = if cfg!(windows) && is_msys2_path(&vpath) {
+        let (vcode, vout) = if cfg!(windows)
+            && (is_msys2_path(&vpath) || is_bundled_tool(bundled_root.as_deref(), &vpath))
+        {
             // Run via MSYS2 bash so VERILATOR_ROOT=/ucrt64/... and python scripts resolve.
             let mut parts: Vec<String> = vec![];
             parts.push(format!("\"{}\"", vpath.replace('"', "\\\"")));
@@ -2313,7 +2359,8 @@ async fn project_build(
                 parts.push(fl.to_string());
             }
             let cmdline = format!("VERILATOR_ROOT=/ucrt64/share/verilator {}", parts.join(" "));
-            run_msys2_bash(&rootp, &cmdline)?
+            let bundled_root = bundled_toolchain_root(&app);
+            run_msys2_bash(&rootp, bundled_root.as_deref(), &cmdline)?
         } else {
             run_cmd_capture(vcmd)?
         };
@@ -2341,7 +2388,8 @@ async fn project_build(
                 mpath.replace('"', "\\\""),
                 mk
             );
-            let (mcode, mout) = run_msys2_bash(&rootp, &cmdline)?;
+            let bundled_root = bundled_toolchain_root(&app);
+            let (mcode, mout) = run_msys2_bash(&rootp, bundled_root.as_deref(), &cmdline)?;
 
             let mut out = String::new();
             out.push_str(&vout);
@@ -2421,7 +2469,8 @@ fn project_open_waves(
         return Err("GTKWave not found. Install it via MSYS2 and/or set path.".to_string());
     }
 
-    if cfg!(windows) && is_msys2_path(&gpath) {
+    if cfg!(windows) && (is_msys2_path(&gpath) || is_bundled_tool(bundled_root.as_deref(), &gpath))
+    {
         // Use bash -lc so MSYS2 GUI app launches with correct env.
         // IMPORTANT: spawn (do not wait), otherwise the UI appears frozen until GTKWave exits.
         let cmdline = format!("\"{}\" \"{}\"", gpath.replace('"', "\\\""), waves_rel);

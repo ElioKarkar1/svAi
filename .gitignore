@@ -1,39 +1,16 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# build artifacts
+/dist
+/src-tauri/target
 
-# Dependencies / builds
-node_modules
-dist
-dist-ssr
+# local caches
+.cache/
+_toolchain_tmp/
 
-# Local env / secrets
-.env
-.env.*
-*.local
-*.pem
-*.key
-*.p12
-*.pfx
-*.crt
-*.cer
-*.der
-*.mobileprovision
-id_rsa
-id_ed25519
+# downloaded/built toolchains
+/src-tauri/resources/toolchain/
+*.zip
+*.sha256.txt
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# local how-to docs
+TOOLCHAIN_BUNDLE_WINDOWS_UCRT64.txt
+MSYS2_UCRT64_COPYPASTE_ONLY.txt
