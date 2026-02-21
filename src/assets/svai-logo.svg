@@ -1,5 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-  <!-- Match app panel color; keep a subtle border like the original icon -->
-  <rect x="0.75" y="0.75" width="16.5" height="16.5" rx="4" fill="#252526" stroke="rgba(255,255,255,0.32)" />
-  <text x="4.05" y="12.4" font-family="Segoe UI, Arial, sans-serif" font-size="9.5" font-weight="700" fill="#7aa2ff">sv</text>
+  <defs>
+    <!-- Match the original Tauri icon gradient -->
+    <linearGradient id="g" x1="2" y1="4" x2="16" y2="14" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4DD6FF"/>
+      <stop offset="1" stop-color="#B86BFF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Same as original icon, but with IDE-grey background instead of black -->
+  <rect x="0.75" y="0.75" width="16.5" height="16.5" rx="4" fill="#252526" />
+
+  <!-- Gradient frame/border -->
+  <rect x="1.3" y="1.3" width="15.4" height="15.4" rx="3.6" fill="none" stroke="url(#g)" stroke-width="1.4" />
+
+  <!-- Letters (gradient like original) -->
+  <text x="9" y="12.6" text-anchor="middle"
+        font-family="Arial Black, Segoe UI Black, Segoe UI, Arial, sans-serif"
+        font-size="9.5" font-weight="900" letter-spacing="-0.6"
+        fill="url(#g)">SV</text>
 </svg>
