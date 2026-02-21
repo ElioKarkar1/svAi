@@ -2407,8 +2407,10 @@ fn project_run_stream(
         }
     }
 
+    // Some toolchains duplicate output to both stdout and stderr.
+    // For UX, stream a single combined log (stdout) to avoid duplicated output.
     cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::null());
 
     #[cfg(windows)]
     {
@@ -2422,7 +2424,7 @@ fn project_run_stream(
     let id = Uuid::new_v4().to_string();
 
     let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+    // stderr is disabled (null)
 
     let child_arc: Arc<Mutex<std::process::Child>> = Arc::new(Mutex::new(child));
 
@@ -2451,29 +2453,7 @@ fn project_run_stream(
         });
     }
 
-    if let Some(mut err) = stderr {
-        let app2 = app.clone();
-        let id2 = id.clone();
-        std::thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            loop {
-                match err.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = app2.emit(
-                            "run:data",
-                            RunDataEvent {
-                                id: id2.clone(),
-                                data: s,
-                            },
-                        );
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-    }
+    // stderr streaming disabled (stderr redirected to null)
 
     // Track for kill / lifecycle
     let state: tauri::State<RunManager> = window.state();
