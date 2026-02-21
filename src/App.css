@@ -74,7 +74,9 @@ button, input, textarea {
 .titlebar__logo {
   width: 18px;
   height: 18px;
-  opacity: 0.9;
+  opacity: 0.95;
+  border-radius: 4px;
+  background: var(--panel);
 }
 
 .winControls {
@@ -123,8 +125,8 @@ button, input, textarea {
 }
 
 .btn {
-  border: 1px solid var(--border2);
-  background: rgba(255,255,255,0.04);
+  border: none;
+  background: transparent;
   color: rgba(255,255,255,0.86);
   padding: 4px 10px;
   border-radius: 6px;
@@ -133,7 +135,7 @@ button, input, textarea {
 }
 
 .btn:hover {
-  background: rgba(255,255,255,0.07);
+  background: rgba(255,255,255,0.06);
 }
 
 .btn:disabled {
@@ -144,9 +146,9 @@ button, input, textarea {
 .pill {
   font-size: 11px;
   padding: 3px 9px;
-  border: 1px solid var(--border2);
+  border: 1px solid rgba(255,255,255,0.16);
   border-radius: 999px;
-  background: rgba(255,255,255,0.04);
+  background: rgba(255,255,255,0.03);
   white-space: nowrap;
 }
 
