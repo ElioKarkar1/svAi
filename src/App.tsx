@@ -7,6 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import iconPng from "../src-tauri/icons/32x32.png";
 import "./App.css";
 
 type FsNode = { path: string; name: string; is_dir: boolean };
@@ -174,7 +175,7 @@ function detectLanguage(relPath: string): string {
 
 export default function App() {
   const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "saving" | "building" | "running">("idle");
+  const [_phase, setPhase] = useState<"idle" | "saving" | "building" | "running">("idle");
   const [root, setRoot] = useState<string>("");
   const [nodes, setNodes] = useState<FsNode[]>([]);
   const [selected, setSelected] = useState<string>("");
@@ -2194,37 +2195,26 @@ export default function App() {
     <div className={"app" + (aiOpen ? " app--ai" : "")}>
       <div className="titlebar" data-tauri-drag-region>
         <div className="titlebar__left" data-tauri-drag-region>
-          <div className="titlebar__app" data-tauri-drag-region>svAi{phase !== "idle" ? ` · ${phase}` : ""}</div>
+          <img className="titlebar__logo" src={iconPng} alt="svAi" data-tauri-drag-region />
           <div className="titlebar__crumbs" data-tauri-drag-region>{crumbs || ""}</div>
         </div>
         <div className="titlebar__right" data-tauri-drag-region={false}>
+          <div className="titlebar__tools" data-tauri-drag-region={false}>
+
+          <button className="btn btn--primary" onClick={() => void (document.activeElement as any)?.blur?.()} style={{ display: "none" }} data-tauri-drag-region={false} />
+          </div>
+
           <div className="winControls" data-tauri-drag-region={false}>
-            <button
-              className="winBtn"
-              data-tauri-drag-region={false}
-              onClick={() => void appWindow.minimize()}
-              title="Minimize"
-            >
+            <button className="winBtn" data-tauri-drag-region={false} onClick={() => void appWindow.minimize()} title="Minimize">
               ─
             </button>
-            <button
-              className="winBtn"
-              data-tauri-drag-region={false}
-              onClick={() => void appWindow.toggleMaximize()}
-              title="Maximize / Restore"
-            >
+            <button className="winBtn" data-tauri-drag-region={false} onClick={() => void appWindow.toggleMaximize()} title="Maximize / Restore">
               □
             </button>
-            <button
-              className="winBtn winBtn--close"
-              data-tauri-drag-region={false}
-              onClick={() => void appWindow.close()}
-              title="Close"
-            >
+            <button className="winBtn winBtn--close" data-tauri-drag-region={false} onClick={() => void appWindow.close()} title="Close">
               ×
             </button>
           </div>
-          <button className="btn btn--primary" onClick={() => void (document.activeElement as any)?.blur?.()} style={{ display: "none" }} data-tauri-drag-region={false} />
 
           <button
             className="btn"

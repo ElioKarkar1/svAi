@@ -57,11 +57,27 @@ button, input, textarea {
   margin-right: 6px;
 }
 
+.titlebar__tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.titlebar__logo {
+  width: 18px;
+  height: 18px;
+  opacity: 0.9;
+}
+
+.winControls {
+  margin-left: 10px;
+}
+
 .winBtn {
   width: 40px;
   height: 26px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.02);
+  border: none;
+  background: transparent;
   color: rgba(255,255,255,0.85);
   border-radius: 6px;
   cursor: pointer;
