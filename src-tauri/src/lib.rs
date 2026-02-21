@@ -29,7 +29,7 @@ struct TermManager {
 
 #[derive(Default)]
 struct RunManager {
-    sessions: Mutex<HashMap<String, Arc<Mutex<std::process::Child>>>>,
+    sessions: Mutex<HashMap<String, Arc<Mutex<Box<dyn portable_pty::Child + Send>>>>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2375,8 +2375,8 @@ fn project_run_stream(
     root: String,
     exe_rel: String,
 ) -> Result<String, String> {
+    // Run under a PTY so stdout is line-buffered and streams smoothly.
     let app = window.app_handle().clone();
-    let label = window.label().to_string();
 
     let rootp = PathBuf::from(&root);
     let mut exe = rootp.join(&exe_rel);
@@ -2394,69 +2394,48 @@ fn project_run_stream(
         }
     }
 
-    let mut cmd = Command::new(&exe);
-    cmd.current_dir(&rootp);
+    let exe_s = exe.to_string_lossy().to_string();
 
+    let mut args: Vec<String> = vec![];
     if let Ok(cfg) = load_or_init_config(&rootp) {
         for a in cfg.plusargs.iter() {
             let t = a.trim();
             if t.is_empty() {
                 continue;
             }
-            cmd.arg(t);
+            args.push(t.to_string());
         }
     }
 
-    // Some toolchains duplicate output to both stdout and stderr.
-    // For UX, stream a single combined log (stdout) to avoid duplicated output.
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::null());
+    let pty_system = portable_pty::native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("pty open failed: {e}"))?;
 
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    let mut cmd = CommandBuilder::new(exe_s);
+    cmd.args(args);
+    cmd.cwd(root.clone());
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to start process: {e}"))?;
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("pty spawn failed: {e}"))?;
+
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("pty reader failed: {e}"))?;
 
     let id = Uuid::new_v4().to_string();
 
-    let stdout = child.stdout.take();
-    // stderr is disabled (null)
-
-    let child_arc: Arc<Mutex<std::process::Child>> = Arc::new(Mutex::new(child));
-
-    // Reader threads
-    if let Some(mut out) = stdout {
-        let app2 = app.clone();
-        let id2 = id.clone();
-        std::thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            loop {
-                match out.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = app2.emit(
-                            "run:data",
-                            RunDataEvent {
-                                id: id2.clone(),
-                                data: s,
-                            },
-                        );
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-    }
-
-    // stderr streaming disabled (stderr redirected to null)
-
     // Track for kill / lifecycle
     let state: tauri::State<RunManager> = window.state();
+    let child_arc: Arc<Mutex<Box<dyn portable_pty::Child + Send>>> = Arc::new(Mutex::new(child));
     {
         let mut map = state
             .sessions
@@ -2465,9 +2444,31 @@ fn project_run_stream(
         map.insert(id.clone(), child_arc.clone());
     }
 
-    // Wait thread
+    // Reader thread: PTY output
+    let app2 = app.clone();
+    let id2 = id.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let _ = app2.emit(
+                        "run:data",
+                        RunDataEvent {
+                            id: id2.clone(),
+                            data: s,
+                        },
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Wait thread: emit exit + cleanup
     let appw = app;
-    let _labelw = label;
     let idw = id.clone();
     let childw = child_arc.clone();
     std::thread::spawn(move || {
@@ -2475,9 +2476,24 @@ fn project_run_stream(
             .lock()
             .ok()
             .and_then(|mut c| c.wait().ok())
-            .and_then(|s| s.code())
+            .map(|s| s.success())
+            .map(|ok| if ok { 0 } else { 1 })
             .unwrap_or(1);
-        let _ = appw.emit("run:exit", RunExitEvent { id: idw, code });
+
+        let _ = appw.emit(
+            "run:exit",
+            RunExitEvent {
+                id: idw.clone(),
+                code,
+            },
+        );
+
+        // Best-effort cleanup
+        if let Some(state) = appw.try_state::<RunManager>() {
+            if let Ok(mut map) = state.sessions.lock() {
+                map.remove(&idw);
+            }
+        }
     });
 
     Ok(id)
