@@ -1,10 +1,10 @@
 # svAi — SystemVerilog Assistant (Tauri)
 
-svAi is a lightweight SystemVerilog workflow app for Windows:
+svAi is a lightweight SystemVerilog desktop app for Windows that helps you go from a folder of SV files to a working Verilator simulation quickly:
 
-- edit → lint → build → run → open waves
-- Verilator + make build pipeline
-- FST waves + GTKWave launch
+- edit → lint → build → run → view waves
+- Verilator + make build pipeline (filelist-driven)
+- optional FST tracing + one-click GTKWave launch
 
 > Status: active development.
 
