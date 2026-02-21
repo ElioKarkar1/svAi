@@ -3132,7 +3132,15 @@ pacman -S --needed \\\n  make \\\n  mingw-w64-ucrt-x86_64-gcc \\\n  mingw-w64-uc
           </div>
           <div className="ctx__sep" />
 
-          <div style={{ padding: 8, display: "grid", gap: 10 }}>
+          <div
+            style={{
+              padding: 8,
+              display: "grid",
+              gap: 10,
+              maxHeight: "calc(100vh - 160px)",
+              overflow: "auto",
+            }}
+          >
             <label className="field">
               <div className="field__label">Filelist</div>
               <input
