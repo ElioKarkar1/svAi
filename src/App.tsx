@@ -1939,6 +1939,8 @@ export default function App() {
         const chunk = e.payload.data || "";
         runStreamBufRef.current += chunk;
         runStreamBytesRef.current += chunk.length;
+        // update KB indicator promptly
+        setRunStreamBytes(runStreamBytesRef.current);
       });
       if (cancelled) {
         try { u2(); } catch {}
@@ -2295,7 +2297,16 @@ export default function App() {
                   runStreamIdRef.current = sid;
 
                   // Seed the log with a marker so it's obvious streaming is active.
-                  setRuns((prev) => prev.map((r) => (r.id === logId ? { ...r, output: `[run started: ${sid}]\n` } : r)));
+                  setRuns((prev) =>
+                    prev.map((r) =>
+                      r.id === logId
+                        ? {
+                            ...r,
+                            output: (r.output || "") + `[run started: ${sid}]\n`,
+                          }
+                        : r
+                    )
+                  );
 
                   // Wait for exit event to flip title/code; UI remains responsive.
                 } catch (e: any) {
