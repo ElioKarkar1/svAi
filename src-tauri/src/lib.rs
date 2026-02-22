@@ -450,12 +450,22 @@ fn bundled_toolchain_subdir() -> String {
 
 fn bundled_toolchain_root(app: &tauri::AppHandle) -> Option<PathBuf> {
     let base = app.path().resource_dir().ok()?;
-    let root = base.join("toolchain").join(bundled_toolchain_subdir());
-    if root.exists() {
-        Some(root)
-    } else {
-        None
+    let sub = bundled_toolchain_subdir();
+
+    // Depending on bundler/installer layout, resources may either be:
+    // - <resource_dir>/toolchain/<sub>/...
+    // - <resource_dir>/resources/toolchain/<sub>/...
+    let a = base.join("toolchain").join(&sub);
+    if a.exists() {
+        return Some(a);
     }
+
+    let b = base.join("resources").join("toolchain").join(&sub);
+    if b.exists() {
+        return Some(b);
+    }
+
+    None
 }
 
 fn maybe_prepend_exe(cands: &mut Vec<String>, p: PathBuf) {
